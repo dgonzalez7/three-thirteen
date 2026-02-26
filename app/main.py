@@ -17,6 +17,7 @@ DETECTIVES = [
     "Brother Cadfael",
     "Lord Peter Wimsey",
     "C. Auguste Dupin",
+    "Father Brown"
 ]
 
 @app.get("/", response_class=HTMLResponse)
