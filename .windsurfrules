@@ -1,0 +1,102 @@
+# Three-Thirteen Game Architecture Rules
+
+## Project-Specific Context
+- **Game Rules**: Refer to docs/RULES.md as the canonical source for game rules
+- **Game Phases**: The game phases (lobby → join room → dealing → playing & scoring → game finish → repeat)
+- **Room Model**: The room model (Max 10 rooms, 4-8 players per room)
+- **State Management**: v1 uses in-memory state only (no database)
+
+## Core Principles
+
+### Server-Authoritative Architecture
+- **Single Source of Truth**: All game state, logic, and validation must reside on the server
+- **Client as View**: Frontend only renders state and sends user actions to server
+- **No Client-Side Game Logic**: Never implement game rules, scoring, or state transitions on the client
+- **Validation Everywhere**: Server validates all incoming actions, even from trusted clients
+
+### Real-Time Multiplayer Design
+- **WebSocket Communication**: Use FastAPI WebSockets for real-time bidirectional communication
+- **Event-Driven Architecture**: Server emits events, clients subscribe and react
+- **Room-Based Isolation**: Each game instance runs in an isolated room with its own state
+- **Consistent State**: All players in a room see identical game state simultaneously
+
+### State Management
+- **Immutable State**: Game state objects should be immutable, create new objects for changes
+- **Atomic Updates**: All state changes must be atomic and transactional
+- **State Synchronization**: Broadcast complete state changes to all room participants
+
+## Backend Architecture
+
+### FastAPI Structure
+- **Dependency Injection**: Use FastAPI's DI for services, repositories, and utilities
+- **Pydantic Models**: All API models must use Pydantic for validation and serialization
+- **Async/Await**: All I/O operations must be asynchronous
+- **Error Handling**: Implement consistent error responses with proper HTTP status codes
+
+### Game Engine
+- **Pure Functions**: Game logic should be pure functions that take state and actions, return new state
+- **Rule Engine**: Separate rule validation from state management
+- **Event System**: Implement event bus for decoupled game event handling
+- **Testing**: All game logic must be unit testable without WebSocket dependencies
+
+### Room Management
+- **Lifecycle Management**: Proper room creation, joining, leaving, and cleanup
+- **Player Limits**: Enforce maximum player limits per room
+- **Reconnection**: Handle player disconnections and reconnections gracefully
+
+## Frontend Architecture
+
+### React Structure
+- **Component Composition**: Build reusable, composable components
+- **Props Interface**: Clear prop contracts between parent and child components
+- **State Lifting**: Lift state up to the lowest common ancestor
+- **Controlled Components**: Use controlled components for all user inputs
+
+### WebSocket Integration
+- **Custom Hook**: Centralize WebSocket logic in a custom hook
+- **Connection Management**: Handle connection, reconnection, and cleanup
+- **Event Handling**: Map server events to state updates and side effects
+- **Error Boundaries**: Implement error boundaries for WebSocket failures
+
+### Performance
+- **React.memo**: Use memoization for expensive components
+- **useCallback/useMemo**: Optimize callbacks and computed values
+
+## Development Guidelines
+
+### Code Quality
+- **TypeScript**: Use TypeScript for all frontend code
+- **Python Typing**: Use type hints for all Python code
+- **Linting**: Configure and enforce linting rules
+- **Formatting**: Use consistent code formatting (Prettier for JS, Black for Python)
+
+### Testing
+- **Unit Tests**: Test all game logic and business rules
+- **Integration Tests**: Test WebSocket communication and room management
+- **E2E Tests**: Test critical user journeys (Future requirement)
+- **Test Coverage**: Maintain high test coverage for game logic
+
+### Security
+- **Input Validation**: Validate all user inputs on the server
+- **Authentication**: Secure player identification and room access
+- **Data Sanitization**: Sanitize all data before storage or broadcast
+
+## Technology Stack
+
+### Backend
+- **FastAPI**: Web framework and WebSocket server
+- **Pydantic**: Data validation and serialization
+- **WebSockets**: Real-time communication protocol
+- **Python 3.11+**: Runtime environment
+
+### Frontend
+- **React 18**: UI framework
+- **TypeScript**: Type safety
+- **Vite**: Build tool and dev server
+- **Tailwind CSS**: Styling framework
+
+### DevOps
+- **Docker**: Containerization
+- **Docker Compose**: Local development environment
+- **GitHub Actions**: CI/CD pipeline
+- **pytest**: Python testing framework

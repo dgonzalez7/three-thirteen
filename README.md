@@ -1,26 +1,47 @@
-# Three Thirteen
+# Three-Thirteen
 
-An online version of the card game Three Thirteen (3-13).
+A real-time multiplayer card game implementation using FastAPI WebSockets and React.
 
-## Current Status
+## Overview
+Three-Thirteen is a server-authoritative multiplayer card game for 4-8 players. The game features real-time gameplay with WebSocket communication, room-based game instances, and comprehensive game logic on the server side.
 
-Infrastructure scaffolding with a "Hello, Detective!" placeholder app.
+## Technology Stack
+- **Backend**: FastAPI, Pydantic, WebSockets, Python 3.11+
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS
+- **DevOps**: Docker, Docker Compose, pytest
 
-## Local Development
-```powershell
-# Run with Docker
-docker build -t three-thirteen .
-docker run -p 8000:8000 three-thirteen
-
-# Run tests
-pip install -r requirements.txt
-pytest app/tests/
+## Project Structure
+```
+three-thirteen/
+├── docs/                    # Documentation
+├── backend/                 # FastAPI server and game engine
+│   ├── game/               # Core game logic
+│   └── tests/              # Backend tests
+├── frontend/               # React client
+│   └── src/
+│       ├── components/     # React components
+│       └── hooks/          # Custom hooks
+└── docker-compose.yml      # Development environment
 ```
 
-## Architecture
+## Quick Start
+```bash
+# Using Docker Compose (recommended)
+docker-compose up --build
 
-- **App:** Python / FastAPI
-- **Container:** Docker
-- **Cloud:** AWS App Runner
-- **CI/CD:** GitHub Actions
-- **IaC:** Terraform
+# Or run services separately
+cd backend && uvicorn main:app --reload
+cd frontend && npm run dev
+```
+
+## Game Features
+- Real-time multiplayer gameplay
+- Room-based game instances (max 10 rooms, 4-8 players each)
+- Server-authoritative game logic
+- WebSocket-based communication
+- Immutable state management
+
+## Documentation
+- [Game Rules](docs/RULES.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development Setup](docs/DEVELOPMENT_SETUP.md)

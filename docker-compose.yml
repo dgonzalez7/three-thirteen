@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - backend_cache:/app/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - three-thirteen-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+      - "5173:5173"  # Vite dev server
+    environment:
+      - NODE_ENV=development
+      - VITE_WS_URL=ws://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - frontend_cache:/app/.cache
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - three-thirteen-network
+
+  # TODO: Add database service for future persistence
+  # database:
+  #   image: postgres:15
+  #   environment:
+  #     POSTGRES_DB: three_thirteen
+  #     POSTGRES_USER: game_user
+  #     POSTGRES_PASSWORD: game_password
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - three-thirteen-network
+
+  # TODO: Add Redis service for session management
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - three-thirteen-network
+
+volumes:
+  backend_cache:
+    driver: local
+  frontend_cache:
+    driver: local
+  # postgres_data:
+  #   driver: local
+
+networks:
+  three-thirteen-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
