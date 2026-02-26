@@ -59,10 +59,3 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      - name: Deploy to App Runner
-        run: |
-          aws apprunner start-deployment \
-            --service-arn $(aws apprunner list-services \
-              --query "ServiceSummaryList[?ServiceName=='three-thirteen'].ServiceArn" \
-              --output text)
