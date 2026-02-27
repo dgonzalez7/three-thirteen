@@ -1,18 +1,11 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-import json
+import uuid
 
 from game.room_manager import RoomManager
-from game.events import EventBus
-
-# TODO: Add proper logging configuration
-# TODO: Add authentication middleware
-# TODO: Add rate limiting
 
 app = FastAPI(title="Three-Thirteen Game Server")
 
-# CORS middleware for frontend development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -21,34 +14,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global services
+# Single global RoomManager instance — owns all state for v1
 room_manager = RoomManager()
-event_bus = EventBus()
+
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
+    """Health check endpoint."""
     return {"status": "healthy", "message": "Three-Thirteen Game Server"}
+
 
 @app.get("/rooms")
 async def get_rooms():
-    """Get list of available rooms"""
-    # TODO: Implement room listing logic
-    return {"rooms": []}
+    """Return the current state of all 10 rooms (HTTP snapshot)."""
+    return {"rooms": [r.model_dump() for r in room_manager.get_all_rooms()]}
 
-@app.post("/rooms")
-async def create_room():
-    """Create a new game room"""
-    # TODO: Implement room creation logic
-    return {"room_id": "placeholder", "status": "created"}
 
-@app.websocket("/ws/{room_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str):
-    """WebSocket endpoint for real-time game communication"""
-    # TODO: Implement WebSocket connection handling
-    # TODO: Implement room joining logic
-    # TODO: Implement message routing
-    pass
+@app.websocket("/ws/lobby")
+async def lobby_websocket(websocket: WebSocket):
+    """Lobby WebSocket — clients connect here to receive real-time room list updates.
+
+    The server sends a `rooms_update` event immediately on connect and again
+    whenever any room's state changes.
+    """
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+
+    await room_manager.register_lobby_connection(connection_id, websocket)
+
+    try:
+        # Keep the connection alive; lobby clients only receive, never send
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await room_manager.unregister_lobby_connection(connection_id)
+
+
+@app.websocket("/ws/room/{room_id}")
+async def room_websocket(
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str = Query(..., description="Unique player identifier"),
+):
+    """Game-room WebSocket — used once a player has chosen a room in the lobby.
+
+    Query param `player_id` must be supplied by the client.
+    """
+    await websocket.accept()
+
+    success, error_msg = await room_manager.join_room(room_id, player_id, websocket)
+
+    if not success:
+        await websocket.send_json({"type": "error", "message": error_msg})
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            # TODO: Route incoming game actions through the game engine
+            _ = data
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await room_manager.leave_room(room_id, player_id)
+
 
 if __name__ == "__main__":
     import uvicorn

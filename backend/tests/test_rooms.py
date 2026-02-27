@@ -1,153 +1,337 @@
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
-import asyncio
+from unittest.mock import AsyncMock, MagicMock
 from fastapi import WebSocket
 
-from game.room_manager import RoomManager
-from game.state import RoomState, Player
+from game.room_manager import RoomManager, NUM_ROOMS
+from game.state import RoomStatus
 
-class TestRoomManager:
-    """Test cases for RoomManager"""
-    
-    def setup_method(self):
-        """Setup test fixtures"""
-        self.room_manager = RoomManager()
-        self.mock_websocket = Mock(spec=WebSocket)
-        self.mock_websocket.send_json = AsyncMock()
-    
-    @pytest.mark.asyncio
-    async def test_create_room(self):
-        """Test room creation"""
-        # TODO: Test room creation with default settings
-        # TODO: Test room creation with custom max players
-        # TODO: Verify room ID generation
-        room_id = await self.room_manager.create_room()
-        
-        assert room_id in self.room_manager.rooms
-        assert room_id in self.room_manager.room_connections
-        assert len(self.room_manager.rooms[room_id].max_players) == 8
-    
-    @pytest.mark.asyncio
-    async def test_join_room(self):
-        """Test joining a room"""
-        # TODO: Test successful room join
-        # TODO: Test joining non-existent room
-        # TODO: Test duplicate player join
-        # TODO: Test room capacity limits
-        room_id = await self.room_manager.create_room(max_players=4)
-        
-        success = await self.room_manager.join_room(
-            room_id, 
-            "player1", 
-            self.mock_websocket
-        )
-        
-        assert success is True
-        assert "player1" in self.room_manager.room_connections[room_id]
-    
-    @pytest.mark.asyncio
-    async def test_join_nonexistent_room(self):
-        """Test joining a room that doesn't exist"""
-        success = await self.room_manager.join_room(
-            "nonexistent",
-            "player1",
-            self.mock_websocket
-        )
-        
-        assert success is False
-    
-    @pytest.mark.asyncio
-    async def test_leave_room(self):
-        """Test leaving a room"""
-        # TODO: Test successful room leave
-        # TODO: Test leaving non-existent room
-        # TODO: Test leaving room player not in
-        room_id = await self.room_manager.create_room()
-        
-        # First join the room
-        await self.room_manager.join_room(room_id, "player1", self.mock_websocket)
-        
-        # Then leave
-        success = await self.room_manager.leave_room(room_id, "player1")
-        
-        assert success is True
-        assert "player1" not in self.room_manager.room_connections[room_id]
-    
-    @pytest.mark.asyncio
-    async def test_broadcast_to_room(self):
-        """Test broadcasting messages to room"""
-        # TODO: Test successful broadcast
-        # TODO: Test broadcast to empty room
-        # TODO: Test broadcast with disconnected clients
-        # TODO: Verify cleanup of disconnected players
-        room_id = await self.room_manager.create_room()
-        
-        # Add multiple players
-        mock_ws2 = Mock(spec=WebSocket)
-        mock_ws2.send_json = AsyncMock()
-        
-        await self.room_manager.join_room(room_id, "player1", self.mock_websocket)
-        await self.room_manager.join_room(room_id, "player2", mock_ws2)
-        
-        message = {"type": "test", "data": "hello"}
-        sent_count = await self.room_manager.broadcast_to_room(room_id, message)
-        
-        assert sent_count == 2
-        self.mock_websocket.send_json.assert_called_once_with(message)
-        mock_ws2.send_json.assert_called_once_with(message)
-    
-    def test_get_room_state(self):
-        """Test getting room state"""
-        # TODO: Test getting existing room state
-        # TODO: Test getting non-existent room state
-        room_id = "test_room"
-        self.room_manager.rooms[room_id] = RoomState(
-            room_id=room_id,
-            max_players=4,
-            created_at="2023-01-01T00:00:00"
-        )
-        
-        state = self.room_manager.get_room_state(room_id)
-        assert state is not None
-        assert state.room_id == room_id
-        
-        nonexistent = self.room_manager.get_room_state("nonexistent")
-        assert nonexistent is None
-    
-    def test_get_active_rooms(self):
-        """Test getting list of active rooms"""
-        # TODO: Test active rooms filter
-        # TODO: Test empty rooms list
-        room_id1 = "room1"
-        room_id2 = "room2"
-        
-        self.room_manager.rooms[room_id1] = RoomState(
-            room_id=room_id1,
-            max_players=4,
-            created_at="2023-01-01T00:00:00",
-            is_active=True
-        )
-        
-        self.room_manager.rooms[room_id2] = RoomState(
-            room_id=room_id2,
-            max_players=4,
-            created_at="2023-01-01T00:00:00",
-            is_active=False
-        )
-        
-        active_rooms = self.room_manager.get_active_rooms()
-        assert len(active_rooms) == 2  # TODO: Filter by active status
-    
-    @pytest.mark.asyncio
-    async def test_cleanup_inactive_rooms(self):
-        """Test cleanup of inactive rooms"""
-        # TODO: Test room inactivity detection
-        # TODO: Test cleanup of old rooms
-        # TODO: Test cleanup of orphaned connections
-        cleaned_count = await self.room_manager.cleanup_inactive_rooms()
-        assert isinstance(cleaned_count, int)
 
-# TODO: Add integration tests with GameEngine
-# TODO: Add WebSocket connection tests
-# TODO: Add concurrency tests for multiple players
-# TODO: Add performance tests for room management
+def make_ws() -> MagicMock:
+    """Return a mock WebSocket whose async methods work correctly."""
+    ws = MagicMock(spec=WebSocket)
+    ws.send_json = AsyncMock()
+    ws.receive_text = AsyncMock(return_value="ping")
+    return ws
+
+
+@pytest.fixture
+def rm() -> RoomManager:
+    """Fresh RoomManager for each test."""
+    return RoomManager()
+
+
+# ---------------------------------------------------------------------------
+# Initialisation
+# ---------------------------------------------------------------------------
+
+class TestInitialisation:
+    def test_creates_ten_rooms(self, rm):
+        assert len(rm.rooms) == NUM_ROOMS
+
+    def test_room_ids_are_room_1_through_10(self, rm):
+        expected = {f"room-{i}" for i in range(1, NUM_ROOMS + 1)}
+        assert set(rm.rooms.keys()) == expected
+
+    def test_all_rooms_start_empty(self, rm):
+        for room in rm.rooms.values():
+            assert room.status == RoomStatus.EMPTY
+
+    def test_all_rooms_start_with_zero_players(self, rm):
+        for room in rm.rooms.values():
+            assert room.player_count == 0
+            assert room.player_ids == []
+
+    def test_room_names_match_ids(self, rm):
+        for i in range(1, NUM_ROOMS + 1):
+            room = rm.rooms[f"room-{i}"]
+            assert room.room_name == f"Room {i}"
+
+    def test_get_all_rooms_returns_ten(self, rm):
+        assert len(rm.get_all_rooms()) == NUM_ROOMS
+
+
+# ---------------------------------------------------------------------------
+# Lobby connections
+# ---------------------------------------------------------------------------
+
+class TestLobbyConnections:
+    @pytest.mark.asyncio
+    async def test_register_lobby_sends_snapshot(self, rm):
+        ws = make_ws()
+        await rm.register_lobby_connection("conn-1", ws)
+        ws.send_json.assert_awaited_once()
+        payload = ws.send_json.call_args[0][0]
+        assert payload["type"] == "rooms_update"
+        assert len(payload["rooms"]) == NUM_ROOMS
+
+    @pytest.mark.asyncio
+    async def test_unregister_lobby_removes_connection(self, rm):
+        ws = make_ws()
+        await rm.register_lobby_connection("conn-1", ws)
+        await rm.unregister_lobby_connection("conn-1")
+        assert "conn-1" not in rm.lobby_connections
+
+    @pytest.mark.asyncio
+    async def test_unregister_unknown_connection_is_safe(self, rm):
+        """Unregistering a connection that was never added must not raise."""
+        await rm.unregister_lobby_connection("does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# join_room — happy path
+# ---------------------------------------------------------------------------
+
+class TestJoinRoom:
+    @pytest.mark.asyncio
+    async def test_join_empty_room_succeeds(self, rm):
+        ws = make_ws()
+        ok, msg = await rm.join_room("room-1", "p1", ws)
+        assert ok is True
+        assert msg == ""
+
+    @pytest.mark.asyncio
+    async def test_join_transitions_empty_to_gathering(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        assert rm.rooms["room-1"].status == RoomStatus.GATHERING
+
+    @pytest.mark.asyncio
+    async def test_join_increments_player_count(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.join_room("room-1", "p2", make_ws())
+        assert rm.rooms["room-1"].player_count == 2
+
+    @pytest.mark.asyncio
+    async def test_join_adds_player_id_to_list(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "alice", ws)
+        assert "alice" in rm.rooms["room-1"].player_ids
+
+    @pytest.mark.asyncio
+    async def test_join_stores_websocket_connection(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        assert rm.room_connections["room-1"]["p1"] is ws
+
+    @pytest.mark.asyncio
+    async def test_join_broadcasts_rooms_update_to_lobby(self, rm):
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        lobby_ws.send_json.reset_mock()
+
+        await rm.join_room("room-1", "p1", make_ws())
+
+        lobby_ws.send_json.assert_awaited_once()
+        payload = lobby_ws.send_json.call_args[0][0]
+        assert payload["type"] == "rooms_update"
+
+    @pytest.mark.asyncio
+    async def test_join_gathering_room_succeeds(self, rm):
+        """A second player can join a gathering room."""
+        await rm.join_room("room-1", "p1", make_ws())
+        ok, _ = await rm.join_room("room-1", "p2", make_ws())
+        assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# join_room — failure cases
+# ---------------------------------------------------------------------------
+
+class TestJoinRoomFailures:
+    @pytest.mark.asyncio
+    async def test_join_nonexistent_room_fails(self, rm):
+        ok, msg = await rm.join_room("room-99", "p1", make_ws())
+        assert ok is False
+        assert msg != ""
+
+    @pytest.mark.asyncio
+    async def test_join_in_game_room_fails(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.join_room("room-1", "p2", make_ws())
+        await rm.join_room("room-1", "p3", make_ws())
+        await rm.join_room("room-1", "p4", make_ws())
+        await rm.start_game("room-1")
+
+        ok, msg = await rm.join_room("room-1", "p5", make_ws())
+        assert ok is False
+        assert "in progress" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_join_duplicate_player_fails(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        ok, msg = await rm.join_room("room-1", "p1", make_ws())
+        assert ok is False
+        assert msg != ""
+
+    @pytest.mark.asyncio
+    async def test_join_full_room_fails(self, rm):
+        for i in range(8):
+            await rm.join_room("room-1", f"p{i}", make_ws())
+        ok, msg = await rm.join_room("room-1", "p_extra", make_ws())
+        assert ok is False
+        assert msg != ""
+
+
+# ---------------------------------------------------------------------------
+# leave_room
+# ---------------------------------------------------------------------------
+
+class TestLeaveRoom:
+    @pytest.mark.asyncio
+    async def test_leave_removes_player(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.leave_room("room-1", "p1")
+        assert "p1" not in rm.rooms["room-1"].player_ids
+
+    @pytest.mark.asyncio
+    async def test_leave_decrements_count(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.join_room("room-1", "p2", make_ws())
+        await rm.leave_room("room-1", "p1")
+        assert rm.rooms["room-1"].player_count == 1
+
+    @pytest.mark.asyncio
+    async def test_leave_last_player_transitions_to_empty(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.leave_room("room-1", "p1")
+        assert rm.rooms["room-1"].status == RoomStatus.EMPTY
+
+    @pytest.mark.asyncio
+    async def test_leave_partial_stays_gathering(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.join_room("room-1", "p2", make_ws())
+        await rm.leave_room("room-1", "p1")
+        assert rm.rooms["room-1"].status == RoomStatus.GATHERING
+
+    @pytest.mark.asyncio
+    async def test_leave_removes_websocket_connection(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        await rm.leave_room("room-1", "p1")
+        assert "p1" not in rm.room_connections["room-1"]
+
+    @pytest.mark.asyncio
+    async def test_leave_nonexistent_room_returns_false(self, rm):
+        result = await rm.leave_room("room-99", "p1")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_leave_player_not_in_room_is_safe(self, rm):
+        """Leaving a room you are not in should not raise."""
+        result = await rm.leave_room("room-1", "ghost")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_leave_during_game_does_not_change_to_empty(self, rm):
+        """If a player leaves a room that is in_game, status stays in_game
+        until end_game is called (the game engine decides what to do)."""
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        await rm.leave_room("room-1", "p1")
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+
+# ---------------------------------------------------------------------------
+# Game lifecycle (start_game / end_game)
+# ---------------------------------------------------------------------------
+
+class TestGameLifecycle:
+    @pytest.mark.asyncio
+    async def test_start_game_transitions_to_in_game(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        ok = await rm.start_game("room-1")
+        assert ok is True
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+    @pytest.mark.asyncio
+    async def test_start_game_on_empty_room_fails(self, rm):
+        ok = await rm.start_game("room-1")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_start_game_on_in_game_room_fails(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        ok = await rm.start_game("room-1")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_start_game_nonexistent_room_fails(self, rm):
+        ok = await rm.start_game("room-99")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_end_game_transitions_to_empty(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        ok = await rm.end_game("room-1")
+        assert ok is True
+        assert rm.rooms["room-1"].status == RoomStatus.EMPTY
+
+    @pytest.mark.asyncio
+    async def test_end_game_clears_players(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        await rm.end_game("room-1")
+        assert rm.rooms["room-1"].player_count == 0
+        assert rm.rooms["room-1"].player_ids == []
+
+    @pytest.mark.asyncio
+    async def test_end_game_clears_connections(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        await rm.end_game("room-1")
+        assert rm.room_connections["room-1"] == {}
+
+    @pytest.mark.asyncio
+    async def test_end_game_nonexistent_room_fails(self, rm):
+        ok = await rm.end_game("room-99")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_room_is_joinable_again_after_end_game(self, rm):
+        for p in ["p1", "p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        await rm.end_game("room-1")
+        ok, _ = await rm.join_room("room-1", "new_player", make_ws())
+        assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Full state-transition sequence
+# ---------------------------------------------------------------------------
+
+class TestStateTransitionSequence:
+    @pytest.mark.asyncio
+    async def test_full_lifecycle(self, rm):
+        """empty → gathering → in_game → empty → gathering"""
+        room = rm.rooms["room-1"]
+        assert room.status == RoomStatus.EMPTY
+
+        await rm.join_room("room-1", "p1", make_ws())
+        assert room.status == RoomStatus.GATHERING
+
+        for p in ["p2", "p3", "p4"]:
+            await rm.join_room("room-1", p, make_ws())
+        await rm.start_game("room-1")
+        assert room.status == RoomStatus.IN_GAME
+
+        await rm.end_game("room-1")
+        assert room.status == RoomStatus.EMPTY
+
+        await rm.join_room("room-1", "newcomer", make_ws())
+        assert room.status == RoomStatus.GATHERING
+
+    @pytest.mark.asyncio
+    async def test_multiple_rooms_are_independent(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        assert rm.rooms["room-1"].status == RoomStatus.GATHERING
+        assert rm.rooms["room-2"].status == RoomStatus.EMPTY

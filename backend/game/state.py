@@ -70,13 +70,19 @@ class GameState(BaseModel):
     # TODO: Add immutable state update methods
     # TODO: Add game state serialization
 
+class RoomStatus(str, Enum):
+    """Room availability states"""
+    EMPTY = "empty"
+    GATHERING = "gathering"
+    IN_GAME = "in_game"
+
 class RoomState(BaseModel):
     """Represents a room's state including metadata"""
     room_id: str
+    room_name: str
+    status: RoomStatus = RoomStatus.EMPTY
+    player_count: int = 0
+    player_ids: List[str] = []
     game_state: Optional[GameState] = None
     max_players: int = 8
-    created_at: str
-    is_active: bool = True
-    
-    # TODO: Add room lifecycle management
-    # TODO: Add player capacity validation
+    min_players: int = 4
