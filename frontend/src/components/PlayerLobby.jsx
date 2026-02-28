@@ -206,12 +206,36 @@ const PlayerLobby = ({ roomId, roomName, onGameStarting, onBack }) => {
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
+    let didConnect = false;
+
     ws.onopen = () => {
-      if (isMounted) setIsConnected(true);
+      if (isMounted) {
+        didConnect = true;
+        setIsConnected(true);
+      }
     };
 
     ws.onclose = () => {
-      if (isMounted) setIsConnected(false);
+      if (isMounted) {
+        setIsConnected(false);
+        // If we never successfully connected, retry automatically.
+        // This handles the case where the server rejected the connection
+        // due to a race condition (e.g. StrictMode double-mount).
+        if (!didConnect) {
+          setTimeout(() => {
+            if (isMounted) {
+              wsRef.current = null;
+              const retryUrl = `${WS_ROOM_BASE}/${roomId}?player_id=${encodeURIComponent(playerId)}`;
+              const retryWs = new WebSocket(retryUrl);
+              wsRef.current = retryWs;
+              retryWs.onopen = () => { if (isMounted) { didConnect = true; setIsConnected(true); } };
+              retryWs.onclose = () => { if (isMounted) setIsConnected(false); };
+              retryWs.onerror = () => retryWs.close();
+              retryWs.onmessage = ws.onmessage;
+            }
+          }, 500);
+        }
+      }
     };
 
     ws.onerror = () => {

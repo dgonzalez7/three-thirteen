@@ -81,7 +81,11 @@ class RoomManager:
                 return False, "A game is already in progress in this room."
 
         if player_id in room.player_ids:
-            return False, "Player already in room."
+            # Player is reconnecting (e.g. React StrictMode double-mount).
+            # Just update their WebSocket reference — do not modify room state.
+            self.room_connections[room_id][player_id] = websocket
+            self.player_room_map[player_id] = room_id
+            return True, ""
 
         if room.player_count >= room.max_players:
             return False, "Room is full."

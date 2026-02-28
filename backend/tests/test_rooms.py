@@ -157,12 +157,15 @@ class TestJoinRoomFailures:
         assert "in progress" in msg.lower()
 
     @pytest.mark.asyncio
-    async def test_join_duplicate_player_fails(self, rm):
-        ws = make_ws()
-        await rm.join_room("room-1", "p1", ws)
-        ok, msg = await rm.join_room("room-1", "p1", make_ws())
-        assert ok is False
-        assert msg != ""
+    async def test_join_duplicate_player_updates_websocket(self, rm):
+        ws1 = make_ws()
+        await rm.join_room("room-1", "p1", ws1)
+        ws2 = make_ws()
+        ok, msg = await rm.join_room("room-1", "p1", ws2)
+        # Duplicate during GATHERING is treated as a reconnect — succeeds
+        assert ok is True
+        assert rm.room_connections["room-1"]["p1"] is ws2
+        assert rm.rooms["room-1"].player_ids.count("p1") == 1
 
     @pytest.mark.asyncio
     async def test_join_full_room_fails(self, rm):
@@ -635,6 +638,24 @@ class TestHandleEndGame:
 # ---------------------------------------------------------------------------
 
 class TestInGameReconnect:
+    @pytest.mark.asyncio
+    async def test_join_room_duplicate_during_gathering_updates_websocket(self, rm):
+        """join_room with the same player_id during GATHERING (e.g. StrictMode
+        double-mount) must succeed and update the WebSocket reference, not reject."""
+        ws1 = make_ws()
+        ok, err = await rm.join_room("room-1", "p1", ws1)
+        assert ok is True
+
+        ws2 = make_ws()
+        ok, err = await rm.join_room("room-1", "p1", ws2)
+        assert ok is True, f"Reconnect during GATHERING rejected: {err}"
+        # New WebSocket must be registered
+        assert rm.room_connections["room-1"]["p1"] is ws2
+        # player_ids must not have a duplicate entry
+        assert rm.rooms["room-1"].player_ids.count("p1") == 1
+        # Status must still be GATHERING
+        assert rm.rooms["room-1"].status == RoomStatus.GATHERING
+
     @pytest.mark.asyncio
     async def test_lobby_player_can_rejoin_in_game_room(self, rm):
         """A player in lobby_players must be allowed to reconnect to an IN_GAME
