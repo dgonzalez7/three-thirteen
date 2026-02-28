@@ -1,49 +1,61 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import Lobby from './components/Lobby';
+import PlayerLobby from './components/PlayerLobby';
 import GameRoom from './components/GameRoom';
-import Scoreboard from './components/Scoreboard';
 
 // TODO: Add proper error boundaries
 // TODO: Add routing for different game phases
 
 function App() {
-  const [gamePhase, setGamePhase] = useState('lobby');
-  const [selectedRoom, setSelectedRoom] = useState(null); // { roomId, roomName }
-  const [gameState, setGameState] = useState(null);
+  // Phases: 'lobby' | 'player_lobby' | 'game_room'
+  const [phase, setPhase] = useState('lobby');
+  // { roomId, roomName } — set when a room is selected in the main lobby
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  // { roomId, roomName, players, myPlayerId, myName } — set when game starts
+  const [gameContext, setGameContext] = useState(null);
 
-  const handleSelectRoom = (roomId) => {
-    // Derive a display name from the room ID (e.g. "room-3" → "Room 3")
+  const handleSelectRoom = useCallback((roomId) => {
     const roomNumber = roomId.split('-')[1];
     const roomName = `Room ${roomNumber}`;
     setSelectedRoom({ roomId, roomName });
-    setGamePhase('game');
-  };
+    setPhase('player_lobby');
+  }, []);
 
-  const handleLeaveRoom = () => {
+  const handleGameStarting = useCallback((context) => {
+    // context = { roomId, roomName, players, myPlayerId, myName }
+    setGameContext(context);
+    setPhase('game_room');
+  }, []);
+
+  const handleBackToLobby = useCallback(() => {
+    setGameContext(null);
     setSelectedRoom(null);
-    setGameState(null);
-    setGamePhase('lobby');
-  };
+    setPhase('lobby');
+  }, []);
 
-  switch (gamePhase) {
+  switch (phase) {
     case 'lobby':
       return <Lobby onSelectRoom={handleSelectRoom} />;
 
-    case 'game':
+    case 'player_lobby':
       return (
-        <GameRoom
-          roomId={selectedRoom?.roomId}
-          roomName={selectedRoom?.roomName}
-          gameState={gameState}
-          onLeaveRoom={handleLeaveRoom}
+        <PlayerLobby
+          roomId={selectedRoom.roomId}
+          roomName={selectedRoom.roomName}
+          onGameStarting={handleGameStarting}
+          onBack={handleBackToLobby}
         />
       );
 
-    case 'finished':
+    case 'game_room':
       return (
-        <Scoreboard
-          gameState={gameState}
-          onPlayAgain={handleLeaveRoom}
+        <GameRoom
+          roomId={gameContext.roomId}
+          roomName={gameContext.roomName}
+          players={gameContext.players}
+          myPlayerId={gameContext.myPlayerId}
+          myName={gameContext.myName}
+          onBackToLobby={handleBackToLobby}
         />
       );
 

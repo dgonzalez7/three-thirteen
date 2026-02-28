@@ -71,11 +71,38 @@ async def room_websocket(
         await websocket.close()
         return
 
+    # Send the current lobby state immediately so late-joiners see who is
+    # already waiting (Bug 1 fix).
+    room = room_manager.get_room(room_id)
+    await websocket.send_json({
+        "type": "lobby_update",
+        "room_id": room_id,
+        "players": [{"id": p.id, "name": p.name} for p in room.lobby_players],
+        "status": room.status.value,
+    })
+
     try:
         while True:
             data = await websocket.receive_json()
-            # TODO: Route incoming game actions through the game engine
-            _ = data
+            msg_type = data.get("type")
+
+            if msg_type == "join_lobby":
+                player_name = data.get("player_name", "")
+                ok, err = await room_manager.handle_join_lobby(room_id, player_id, player_name)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "leave_lobby":
+                await room_manager.handle_leave_lobby(room_id, player_id)
+
+            elif msg_type == "start_game":
+                ok, err = await room_manager.handle_start_game(room_id)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "end_game":
+                await room_manager.handle_end_game(room_id)
+
     except WebSocketDisconnect:
         pass
     finally:

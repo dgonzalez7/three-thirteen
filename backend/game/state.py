@@ -76,6 +76,11 @@ class RoomStatus(str, Enum):
     GATHERING = "gathering"
     IN_GAME = "in_game"
 
+class LobbyPlayer(BaseModel):
+    """A player who has submitted their name in the pre-game waiting room."""
+    id: str
+    name: str
+
 class RoomState(BaseModel):
     """Represents a room's state including metadata"""
     room_id: str
@@ -83,6 +88,7 @@ class RoomState(BaseModel):
     status: RoomStatus = RoomStatus.EMPTY
     player_count: int = 0
     player_ids: List[str] = []
+    lobby_players: List[LobbyPlayer] = []
     game_state: Optional[GameState] = None
     max_players: int = 8
     min_players: int = 4

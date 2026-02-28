@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 from fastapi import WebSocket
 import asyncio
 
-from .state import RoomState, RoomStatus, GameState, Player
+from .state import RoomState, RoomStatus, GameState, Player, LobbyPlayer
 
 NUM_ROOMS = 10
 
@@ -21,6 +21,8 @@ class RoomManager:
         self.room_connections: Dict[str, Dict[str, WebSocket]] = {}
         # Lobby connections (clients on the lobby screen): connection_id → ws
         self.lobby_connections: Dict[str, WebSocket] = {}
+        # Reverse map: player_id → room_id for cleanup on unexpected disconnect
+        self.player_room_map: Dict[str, str] = {}
 
         self._init_rooms()
 
@@ -68,7 +70,15 @@ class RoomManager:
         room = self.rooms[room_id]
 
         if room.status == RoomStatus.IN_GAME:
-            return False, "A game is already in progress in this room."
+            # Allow players who are already part of this game to reconnect
+            # (e.g. transitioning from PlayerLobby to GameRoom).
+            # Just register their WebSocket — do not modify game state.
+            if player_id in room.player_ids or any(p.id == player_id for p in room.lobby_players):
+                self.room_connections[room_id][player_id] = websocket
+                self.player_room_map[player_id] = room_id
+                return True, ""
+            else:
+                return False, "A game is already in progress in this room."
 
         if player_id in room.player_ids:
             return False, "Player already in room."
@@ -76,8 +86,9 @@ class RoomManager:
         if room.player_count >= room.max_players:
             return False, "Room is full."
 
-        # Persist connection
+        # Persist connection and reverse mapping
         self.room_connections[room_id][player_id] = websocket
+        self.player_room_map[player_id] = room_id
 
         # Update room state
         room.player_ids.append(player_id)
@@ -94,29 +105,86 @@ class RoomManager:
 
         room = self.rooms[room_id]
 
-        # Remove connection
+        # Always remove the WebSocket connection and reverse mapping
         self.room_connections[room_id].pop(player_id, None)
+        self.player_room_map.pop(player_id, None)
 
-        # Update player list
+        if room.status == RoomStatus.IN_GAME:
+            # During a game, only manage WebSocket connections.
+            # handle_end_game owns all state cleanup — do not touch
+            # player_ids, lobby_players, player_count, or status here.
+            # Just broadcast the updated room list so the lobby reflects
+            # current connection count without changing game state.
+            await self._broadcast_rooms_to_lobby()
+            return True
+
+        # Not in game — normal cleanup
         if player_id in room.player_ids:
             room.player_ids.remove(player_id)
         room.player_count = len(room.player_ids)
+        room.lobby_players = [p for p in room.lobby_players if p.id != player_id]
 
-        # Transition status: if no players left the room goes back to empty
         if room.player_count == 0:
             room.status = RoomStatus.EMPTY
-        elif room.status != RoomStatus.IN_GAME:
+        else:
             room.status = RoomStatus.GATHERING
 
         await self._broadcast_room_update(room)
+        await self._broadcast_lobby_update(room)
         return True
 
     # ------------------------------------------------------------------
-    # Game lifecycle (called by the game engine later)
+    # Named-player lobby (join_lobby / leave_lobby)
+    # ------------------------------------------------------------------
+
+    async def handle_join_lobby(self, room_id: str, player_id: str, player_name: str) -> tuple[bool, str]:
+        """Register a player's display name in the room's waiting list.
+
+        The player must already have a WebSocket connection in the room
+        (i.e. join_room must have succeeded first).
+        Returns (success, error_message).
+        """
+        if room_id not in self.rooms:
+            return False, "Room does not exist."
+
+        room = self.rooms[room_id]
+
+        if room.status == RoomStatus.IN_GAME:
+            return False, "A game is already in progress in this room."
+
+        if not player_name or not player_name.strip():
+            return False, "Player name must not be empty."
+
+        trimmed = player_name.strip()
+
+        # Handle reconnect: if player_id already present, update name
+        existing = next((p for p in room.lobby_players if p.id == player_id), None)
+        if existing:
+            existing.name = trimmed
+        else:
+            room.lobby_players.append(LobbyPlayer(id=player_id, name=trimmed))
+
+        self.player_room_map[player_id] = room_id
+        await self._broadcast_lobby_update(room)
+        return True, ""
+
+    async def handle_leave_lobby(self, room_id: str, player_id: str) -> bool:
+        """Remove a player's named entry from the lobby list."""
+        if room_id not in self.rooms:
+            return False
+
+        room = self.rooms[room_id]
+        room.lobby_players = [p for p in room.lobby_players if p.id != player_id]
+        self.player_room_map.pop(player_id, None)
+        await self._broadcast_lobby_update(room)
+        return True
+
+    # ------------------------------------------------------------------
+    # Game lifecycle
     # ------------------------------------------------------------------
 
     async def start_game(self, room_id: str) -> bool:
-        """Transition a room from gathering → in_game."""
+        """Transition a room from gathering → in_game (internal / test use)."""
         if room_id not in self.rooms:
             return False
 
@@ -128,20 +196,76 @@ class RoomManager:
         await self._broadcast_room_update(room)
         return True
 
-    async def end_game(self, room_id: str) -> bool:
-        """Transition a room from in_game → empty and clear players."""
+    async def handle_start_game(self, room_id: str) -> tuple[bool, str]:
+        """Handle a start_game request from a player.
+
+        Requires at least 2 named lobby players.
+        Broadcasts game_starting to room clients and rooms_update to lobby.
+        """
+        if room_id not in self.rooms:
+            return False, "Room does not exist."
+
+        room = self.rooms[room_id]
+
+        if room.status == RoomStatus.IN_GAME:
+            return False, "Game already in progress."
+
+        if len(room.lobby_players) < 2:
+            return False, "Need at least 2 players to start."
+
+        room.status = RoomStatus.IN_GAME
+        # Broadcast game_starting to everyone in the room
+        await self.broadcast_to_room(room_id, {
+            "type": "game_starting",
+            "room_id": room_id,
+            "players": [p.model_dump(mode='json') for p in room.lobby_players],
+        })
+        # Update the main lobby room list
+        await self._broadcast_rooms_to_lobby()
+        return True, ""
+
+    async def handle_end_game(self, room_id: str) -> bool:
+        """Reset a room after a game ends — clears all players and lobby list.
+
+        Snapshots connections before any state changes so a simultaneous
+        leave_room cannot remove clients from the dict mid-broadcast.
+        Broadcasts lobby_reset directly (bypassing broadcast_to_room) to
+        avoid leave_room being called on failed sends during teardown.
+        """
         if room_id not in self.rooms:
             return False
 
         room = self.rooms[room_id]
+
+        # Snapshot connections before any state changes so a simultaneous
+        # leave_room cannot remove clients from the dict mid-broadcast
+        connections_snapshot = dict(self.room_connections[room_id])
+
+        # Broadcast lobby_reset directly to snapshot — bypass broadcast_to_room
+        # to avoid leave_room being called on failed sends during teardown
+        for player_id, ws in connections_snapshot.items():
+            try:
+                await ws.send_json({"type": "lobby_reset", "room_id": room_id})
+            except Exception:
+                pass  # Client already disconnected — that's fine
+
+        # Now clear all state
+        players_to_clear = list(room.player_ids)
         room.status = RoomStatus.EMPTY
         room.player_ids = []
+        room.lobby_players = []
         room.player_count = 0
         room.game_state = None
         self.room_connections[room_id] = {}
+        for pid in players_to_clear:
+            self.player_room_map.pop(pid, None)
 
-        await self._broadcast_room_update(room)
+        await self._broadcast_rooms_to_lobby()
         return True
+
+    async def end_game(self, room_id: str) -> bool:
+        """Alias kept for backward-compat with existing tests."""
+        return await self.handle_end_game(room_id)
 
     # ------------------------------------------------------------------
     # Broadcast helpers
@@ -166,7 +290,7 @@ class RoomManager:
         # Also notify players inside the room
         room_event = {
             "type": "room_state",
-            "room": room.model_dump(),
+            "room": room.model_dump(mode='json'),
         }
         disconnected_room = []
         for player_id, ws in list(self.room_connections[room.room_id].items()):
@@ -197,6 +321,35 @@ class RoomManager:
 
         return sent_count
 
+    async def _broadcast_rooms_to_lobby(self) -> None:
+        """Send the current rooms snapshot to all lobby watchers."""
+        rooms_payload = self._rooms_snapshot_payload()
+        disconnected_lobby = []
+        for conn_id, ws in list(self.lobby_connections.items()):
+            try:
+                await ws.send_json(rooms_payload)
+            except Exception:
+                disconnected_lobby.append(conn_id)
+        for conn_id in disconnected_lobby:
+            self.lobby_connections.pop(conn_id, None)
+
+    async def _broadcast_lobby_update(self, room: RoomState) -> None:
+        """Send a lobby_update message to all WebSocket clients in a room."""
+        payload = {
+            "type": "lobby_update",
+            "room_id": room.room_id,
+            "players": [p.model_dump(mode='json') for p in room.lobby_players],
+            "status": room.status.value,
+        }
+        disconnected = []
+        for player_id, ws in list(self.room_connections[room.room_id].items()):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                disconnected.append(player_id)
+        for player_id in disconnected:
+            await self.leave_room(room.room_id, player_id)
+
     async def _send_rooms_snapshot(self, websocket: WebSocket) -> None:
         """Send the current room list snapshot to a single client."""
         try:
@@ -207,7 +360,7 @@ class RoomManager:
     def _rooms_snapshot_payload(self) -> dict:
         return {
             "type": "rooms_update",
-            "rooms": [r.model_dump() for r in self.rooms.values()],
+            "rooms": [r.model_dump(mode='json') for r in self.rooms.values()],
         }
 
     # ------------------------------------------------------------------

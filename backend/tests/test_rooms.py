@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import WebSocket
 
 from game.room_manager import RoomManager, NUM_ROOMS
-from game.state import RoomStatus
+from game.state import RoomStatus, LobbyPlayer
 
 
 def make_ws() -> MagicMock:
@@ -335,3 +335,378 @@ class TestStateTransitionSequence:
         await rm.join_room("room-1", "p1", make_ws())
         assert rm.rooms["room-1"].status == RoomStatus.GATHERING
         assert rm.rooms["room-2"].status == RoomStatus.EMPTY
+
+
+# ---------------------------------------------------------------------------
+# handle_join_lobby
+# ---------------------------------------------------------------------------
+
+class TestHandleJoinLobby:
+    @pytest.mark.asyncio
+    async def test_join_lobby_adds_named_player(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        ok, err = await rm.handle_join_lobby("room-1", "p1", "Alice")
+        assert ok is True
+        assert err == ""
+        assert any(p.name == "Alice" for p in rm.rooms["room-1"].lobby_players)
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_trims_name(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.handle_join_lobby("room-1", "p1", "  Alice  ")
+        assert rm.rooms["room-1"].lobby_players[0].name == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_rejects_empty_name(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        ok, err = await rm.handle_join_lobby("room-1", "p1", "   ")
+        assert ok is False
+        assert err != ""
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_rejects_nonexistent_room(self, rm):
+        ok, err = await rm.handle_join_lobby("room-99", "p1", "Alice")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_rejects_in_game_room(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        ok, err = await rm.handle_join_lobby("room-1", "p1", "Alice")
+        assert ok is False
+        assert "in progress" in err.lower()
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_handles_reconnect_by_updating_name(self, rm):
+        """If a player_id already exists in lobby_players, the name is updated."""
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        ok, _ = await rm.handle_join_lobby("room-1", "p1", "Alice Updated")
+        assert ok is True
+        assert rm.rooms["room-1"].lobby_players[0].name == "Alice Updated"
+        assert len(rm.rooms["room-1"].lobby_players) == 1
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_broadcasts_lobby_update_to_room(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        ws.send_json.reset_mock()
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        calls = [c[0][0] for c in ws.send_json.call_args_list]
+        assert any(c.get("type") == "lobby_update" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_join_lobby_update_includes_all_players(self, rm):
+        ws1, ws2 = make_ws(), make_ws()
+        await rm.join_room("room-1", "p1", ws1)
+        await rm.join_room("room-1", "p2", ws2)
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        await rm.handle_join_lobby("room-1", "p2", "Bob")
+        calls = [c[0][0] for c in ws2.send_json.call_args_list]
+        lobby_updates = [c for c in calls if c.get("type") == "lobby_update"]
+        last = lobby_updates[-1]
+        names = [p["name"] for p in last["players"]]
+        assert "Alice" in names and "Bob" in names
+
+
+# ---------------------------------------------------------------------------
+# handle_leave_lobby
+# ---------------------------------------------------------------------------
+
+class TestHandleLeaveLobby:
+    @pytest.mark.asyncio
+    async def test_leave_lobby_removes_player(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        await rm.handle_leave_lobby("room-1", "p1")
+        assert not any(p.id == "p1" for p in rm.rooms["room-1"].lobby_players)
+
+    @pytest.mark.asyncio
+    async def test_leave_lobby_broadcasts_update(self, rm):
+        ws = make_ws()
+        await rm.join_room("room-1", "p1", ws)
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        ws.send_json.reset_mock()
+        await rm.handle_leave_lobby("room-1", "p1")
+        calls = [c[0][0] for c in ws.send_json.call_args_list]
+        assert any(c.get("type") == "lobby_update" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_leave_lobby_nonexistent_room_returns_false(self, rm):
+        result = await rm.handle_leave_lobby("room-99", "p1")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_leave_room_also_clears_lobby_player(self, rm):
+        """A full WebSocket disconnect must also clean up the lobby player list."""
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        await rm.leave_room("room-1", "p1")
+        assert not any(p.id == "p1" for p in rm.rooms["room-1"].lobby_players)
+
+
+# ---------------------------------------------------------------------------
+# handle_start_game
+# ---------------------------------------------------------------------------
+
+class TestHandleStartGame:
+    @pytest.mark.asyncio
+    async def test_start_game_requires_two_lobby_players(self, rm):
+        await rm.join_room("room-1", "p1", make_ws())
+        await rm.handle_join_lobby("room-1", "p1", "Alice")
+        ok, err = await rm.handle_start_game("room-1")
+        assert ok is False
+        assert "2" in err or "least" in err.lower()
+
+    @pytest.mark.asyncio
+    async def test_start_game_transitions_to_in_game(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        ok, _ = await rm.handle_start_game("room-1")
+        assert ok is True
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+    @pytest.mark.asyncio
+    async def test_start_game_broadcasts_game_starting_to_room(self, rm):
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        ws1.send_json.reset_mock()
+        ws2.send_json.reset_mock()
+        await rm.handle_start_game("room-1")
+        calls = [c[0][0] for c in ws1.send_json.call_args_list]
+        assert any(c.get("type") == "game_starting" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_start_game_game_starting_includes_players(self, rm):
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        calls = [c[0][0] for c in ws1.send_json.call_args_list]
+        game_starting = next(c for c in calls if c.get("type") == "game_starting")
+        names = [p["name"] for p in game_starting["players"]]
+        assert "Alice" in names and "Bob" in names
+
+    @pytest.mark.asyncio
+    async def test_start_game_broadcasts_rooms_update_to_lobby(self, rm):
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        lobby_ws.send_json.reset_mock()
+        await rm.handle_start_game("room-1")
+        calls = [c[0][0] for c in lobby_ws.send_json.call_args_list]
+        assert any(c.get("type") == "rooms_update" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_start_game_rooms_update_status_is_in_game(self, rm):
+        """Regression: rooms_update after handle_start_game must carry status == 'in_game'."""
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        lobby_ws.send_json.reset_mock()
+        await rm.handle_start_game("room-1")
+        calls = [c[0][0] for c in lobby_ws.send_json.call_args_list]
+        rooms_updates = [c for c in calls if c.get("type") == "rooms_update"]
+        assert rooms_updates, "No rooms_update broadcast to lobby after handle_start_game"
+        last = rooms_updates[-1]
+        room_1 = next(r for r in last["rooms"] if r["room_id"] == "room-1")
+        assert room_1["status"] == "in_game", (
+            f"Expected 'in_game' but got '{room_1['status']}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_game_nonexistent_room_fails(self, rm):
+        ok, err = await rm.handle_start_game("room-99")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_start_game_already_in_game_fails(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        ok, err = await rm.handle_start_game("room-1")
+        assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# handle_end_game
+# ---------------------------------------------------------------------------
+
+class TestHandleEndGame:
+    @pytest.mark.asyncio
+    async def test_end_game_resets_status_to_empty(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        ok = await rm.handle_end_game("room-1")
+        assert ok is True
+        assert rm.rooms["room-1"].status == RoomStatus.EMPTY
+
+    @pytest.mark.asyncio
+    async def test_end_game_clears_lobby_players(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        await rm.handle_end_game("room-1")
+        assert rm.rooms["room-1"].lobby_players == []
+
+    @pytest.mark.asyncio
+    async def test_end_game_broadcasts_lobby_reset_to_all_room_clients(self, rm):
+        """Regression: handle_end_game must send lobby_reset to every connected
+        room client so GameRoom.jsx navigates all non-initiating players back."""
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        ws1.send_json.reset_mock()
+        ws2.send_json.reset_mock()
+        await rm.handle_end_game("room-1")
+        for ws in (ws1, ws2):
+            calls = [c[0][0] for c in ws.send_json.call_args_list]
+            assert any(c.get("type") == "lobby_reset" for c in calls), (
+                "lobby_reset not sent to a room client"
+            )
+
+    @pytest.mark.asyncio
+    async def test_end_game_broadcasts_rooms_update_to_lobby(self, rm):
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        lobby_ws.send_json.reset_mock()
+        await rm.handle_end_game("room-1")
+        calls = [c[0][0] for c in lobby_ws.send_json.call_args_list]
+        assert any(c.get("type") == "rooms_update" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_end_game_rooms_update_status_is_empty(self, rm):
+        """Regression: rooms_update after handle_end_game must carry status == 'empty'."""
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        lobby_ws.send_json.reset_mock()
+        await rm.handle_end_game("room-1")
+        calls = [c[0][0] for c in lobby_ws.send_json.call_args_list]
+        rooms_updates = [c for c in calls if c.get("type") == "rooms_update"]
+        assert rooms_updates, "No rooms_update broadcast to lobby after handle_end_game"
+        last = rooms_updates[-1]
+        room_1 = next(r for r in last["rooms"] if r["room_id"] == "room-1")
+        assert room_1["status"] == "empty", (
+            f"Expected 'empty' but got '{room_1['status']}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_end_game_room_is_joinable_again(self, rm):
+        for pid, name in [("p1", "Alice"), ("p2", "Bob")]:
+            await rm.join_room("room-1", pid, make_ws())
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        await rm.handle_end_game("room-1")
+        ok, _ = await rm.join_room("room-1", "newcomer", make_ws())
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_end_game_nonexistent_room_returns_false(self, rm):
+        result = await rm.handle_end_game("room-99")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# IN_GAME reconnect (Bug 2 & 3 regression)
+# ---------------------------------------------------------------------------
+
+class TestInGameReconnect:
+    @pytest.mark.asyncio
+    async def test_lobby_player_can_rejoin_in_game_room(self, rm):
+        """A player in lobby_players must be allowed to reconnect to an IN_GAME
+        room so GameRoom.jsx can open a new WebSocket after PlayerLobby unmounts."""
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+
+        # p1's PlayerLobby has unmounted; GameRoom opens a new WebSocket
+        new_ws = make_ws()
+        ok, err = await rm.join_room("room-1", "p1", new_ws)
+        assert ok is True, f"Reconnect rejected: {err}"
+        assert rm.room_connections["room-1"]["p1"] is new_ws
+
+    @pytest.mark.asyncio
+    async def test_player_not_in_game_cannot_join_in_game_room(self, rm):
+        """A stranger must still be rejected while a game is in progress."""
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+
+        ok, err = await rm.join_room("room-1", "stranger", make_ws())
+        assert ok is False
+        assert "in progress" in err.lower()
+
+    @pytest.mark.asyncio
+    async def test_leave_room_in_game_preserves_game_state(self, rm):
+        """leave_room during IN_GAME must not touch player_ids, lobby_players,
+        player_count, or status — handle_end_game owns that cleanup."""
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+
+        player_ids_before = list(rm.rooms["room-1"].player_ids)
+        lobby_players_before = list(rm.rooms["room-1"].lobby_players)
+
+        await rm.leave_room("room-1", "p1")
+
+        room = rm.rooms["room-1"]
+        # Status must remain IN_GAME
+        assert room.status == RoomStatus.IN_GAME
+        # Game state must be untouched
+        assert room.player_ids == player_ids_before
+        assert room.player_count == len(player_ids_before)
+        assert [p.id for p in room.lobby_players] == [p.id for p in lobby_players_before]
+        # WebSocket connection must be gone
+        assert "p1" not in rm.room_connections["room-1"]
+
+        # Even when ALL connections drop, status stays IN_GAME
+        await rm.leave_room("room-1", "p2")
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+    @pytest.mark.asyncio
+    async def test_leave_room_in_game_does_not_broadcast_lobby_update(self, rm):
+        """Disconnecting while IN_GAME must not push a lobby_update with an
+        empty player list to the remaining GameRoom clients."""
+        ws1, ws2 = make_ws(), make_ws()
+        for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
+            await rm.join_room("room-1", pid, ws)
+            await rm.handle_join_lobby("room-1", pid, name)
+        await rm.handle_start_game("room-1")
+        ws2.send_json.reset_mock()
+
+        await rm.leave_room("room-1", "p1")
+
+        calls = [c[0][0] for c in ws2.send_json.call_args_list]
+        assert not any(c.get("type") == "lobby_update" for c in calls), (
+            "lobby_update must not be sent to GameRoom clients on disconnect"
+        )
