@@ -227,7 +227,7 @@ function CardView({ card, selected, canSelect, onClick }) {
       title={card.is_wild ? 'Wild card' : undefined}
     >
       <span style={{ fontSize: '1.05rem' }}>{label}</span>
-      <span style={{ fontSize: '0.9rem' }}>{suit}</span>
+      <span style={{ fontSize: '1.6rem' }}>{suit}</span>
       {card.is_wild && <span style={{ fontSize: '0.55rem', color: '#fcd34d', marginTop: '2px' }}>W</span>}
     </div>
   );
@@ -594,8 +594,8 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
             >
               {topDiscard ? (
                 <>
-                  <span>{RANK_LABEL[topDiscard.rank]}</span>
-                  <span>{SUIT_SYMBOL[topDiscard.suit]}</span>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{RANK_LABEL[topDiscard.rank]}</span>
+                  <span style={{ fontSize: '1.6rem' }}>{SUIT_SYMBOL[topDiscard.suit]}</span>
                 </>
               ) : (
                 <span style={{ color: '#334155', fontSize: '0.75rem' }}>empty</span>
