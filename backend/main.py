@@ -21,6 +21,7 @@ room_manager = RoomManager()
 
 
 @app.get("/api/health")
+@app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "message": "Three-Thirteen Game Server"}
