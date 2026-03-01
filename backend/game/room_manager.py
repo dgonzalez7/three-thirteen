@@ -2,7 +2,12 @@ from typing import Dict, List, Optional
 from fastapi import WebSocket
 import asyncio
 
-from .state import RoomState, RoomStatus, GameState, Player, LobbyPlayer
+from .state import RoomState, RoomStatus, GameState, LobbyPlayer, GamePhase
+from .engine import (
+    init_game, draw_from_pile, draw_from_discard,
+    discard_card as engine_discard, attempt_go_out as engine_go_out,
+    advance_to_next_round,
+)
 
 NUM_ROOMS = 10
 
@@ -76,6 +81,16 @@ class RoomManager:
             if player_id in room.player_ids or any(p.id == player_id for p in room.lobby_players):
                 self.room_connections[room_id][player_id] = websocket
                 self.player_room_map[player_id] = room_id
+                # Immediately replay the current game state so the reconnecting
+                # client doesn't miss the broadcast that fired before its WS opened.
+                if room.game_state is not None:
+                    try:
+                        await websocket.send_json({
+                            "type": "game_state",
+                            "game": self._player_view(room.game_state, player_id),
+                        })
+                    except Exception:
+                        pass
                 return True, ""
             else:
                 return False, "A game is already in progress in this room."
@@ -204,7 +219,7 @@ class RoomManager:
         """Handle a start_game request from a player.
 
         Requires at least 2 named lobby players.
-        Broadcasts game_starting to room clients and rooms_update to lobby.
+        Initialises GameState, broadcasts game_state to room clients.
         """
         if room_id not in self.rooms:
             return False, "Room does not exist."
@@ -218,14 +233,128 @@ class RoomManager:
             return False, "Need at least 2 players to start."
 
         room.status = RoomStatus.IN_GAME
-        # Broadcast game_starting to everyone in the room
+        room.game_state = init_game(room_id, room.lobby_players)
+
+        # Notify all room clients so they navigate to GameRoom
         await self.broadcast_to_room(room_id, {
             "type": "game_starting",
             "room_id": room_id,
             "players": [p.model_dump(mode='json') for p in room.lobby_players],
         })
+        # Send each player their personalised game_state view
+        await self._broadcast_game_state(room_id)
         # Update the main lobby room list
         await self._broadcast_rooms_to_lobby()
+        return True, ""
+
+    # ------------------------------------------------------------------
+    # In-game action handlers
+    # ------------------------------------------------------------------
+
+    async def handle_draw_card(self, room_id: str, player_id: str, source: str) -> tuple[bool, str]:
+        """Handle draw_card — source is 'pile' or 'discard'."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return False, "No active game."
+
+        gs = room.game_state
+        if source == "discard":
+            gs, err = draw_from_discard(gs, player_id)
+        else:
+            gs, err = draw_from_pile(gs, player_id)
+
+        if err:
+            return False, err
+
+        room.game_state = gs
+        await self._broadcast_game_state(room_id)
+        return True, ""
+
+    async def handle_discard_card(self, room_id: str, player_id: str, card_id: str) -> tuple[bool, str]:
+        """Handle discard_card."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return False, "No active game."
+
+        gs, err = engine_discard(room.game_state, player_id, card_id)
+        if err:
+            return False, err
+
+        room.game_state = gs
+        await self._broadcast_game_state(room_id)
+
+        if gs.phase == GamePhase.SCORING:
+            await self._broadcast_round_over(room_id)
+
+        return True, ""
+
+    async def handle_go_out(self, room_id: str, player_id: str, card_id: str) -> tuple[bool, str]:
+        """Handle go_out attempt."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return False, "No active game."
+
+        gs, err = engine_go_out(room.game_state, player_id, card_id)
+        if err:
+            return False, err
+
+        room.game_state = gs
+
+        # Notify all players that someone went out (before game_state so UI
+        # can display the notification together with the turn change)
+        gone_out_player = next(p for p in gs.players if p.id == player_id)
+        await self.broadcast_to_room(room_id, {
+            "type": "player_went_out",
+            "player_id": player_id,
+            "player_name": gone_out_player.name,
+            "final_turns_remaining": gs.final_turns_remaining,
+        })
+
+        await self._broadcast_game_state(room_id)
+
+        if gs.phase == GamePhase.SCORING:
+            await self._broadcast_round_over(room_id)
+
+        return True, ""
+
+    async def handle_next_round(self, room_id: str, player_id: str) -> tuple[bool, str]:
+        """Record a player's confirmation to start the next round.
+
+        Each player must click once. The round advances only when every player
+        in the room has confirmed. After each click the updated state is
+        broadcast so unconfirmed players see the button while confirmed ones
+        see 'Waiting for others…'.
+        """
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return False, "No active game."
+
+        gs = room.game_state
+        if gs.phase not in (GamePhase.SCORING, GamePhase.FINISHED):
+            return False, "Round is not over yet."
+
+        if player_id in gs.next_round_confirmed_by:
+            return True, ""  # Duplicate click — already confirmed
+
+        gs.next_round_confirmed_by.append(player_id)
+        room.game_state = gs
+
+        all_confirmed = all(
+            p.id in gs.next_round_confirmed_by for p in gs.players
+        )
+
+        if not all_confirmed:
+            await self._broadcast_game_state(room_id)
+            return True, ""
+
+        gs = advance_to_next_round(gs)
+        room.game_state = gs
+
+        if gs.phase == GamePhase.FINISHED:
+            await self._broadcast_game_finished(room_id)
+        else:
+            await self._broadcast_game_state(room_id)
+
         return True, ""
 
     async def handle_end_game(self, room_id: str) -> bool:
@@ -270,6 +399,72 @@ class RoomManager:
     async def end_game(self, room_id: str) -> bool:
         """Alias kept for backward-compat with existing tests."""
         return await self.handle_end_game(room_id)
+
+    # ------------------------------------------------------------------
+    # Game-state broadcast helpers
+    # ------------------------------------------------------------------
+
+    def _player_view(self, gs: GameState, viewer_id: str) -> dict:
+        """Build a serialisable game-state dict for a specific player.
+
+        Other players' hands are hidden (replaced with card count).
+        Draw pile is hidden (only count exposed).
+        """
+        data = gs.model_dump(mode='json')
+        # Hide other players' hands
+        for p in data['players']:
+            if p['id'] != viewer_id:
+                p['hand_count'] = len(p['hand'])
+                p['hand'] = []  # Do not leak other players' cards
+        # Hide draw pile contents — only expose count
+        data['draw_pile_count'] = len(data['draw_pile'])
+        data['draw_pile'] = []
+        return data
+
+    async def _broadcast_game_state(self, room_id: str) -> None:
+        """Send each connected player their personalised game_state view."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return
+        gs = room.game_state
+        disconnected = []
+        for player_id, ws in list(self.room_connections[room_id].items()):
+            try:
+                await ws.send_json({
+                    "type": "game_state",
+                    "game": self._player_view(gs, player_id),
+                })
+            except Exception:
+                disconnected.append(player_id)
+        for pid in disconnected:
+            await self.leave_room(room_id, pid)
+
+    async def _broadcast_round_over(self, room_id: str) -> None:
+        """Broadcast round_over with full scoring results."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return
+        gs = room.game_state
+        await self.broadcast_to_room(room_id, {
+            "type": "round_over",
+            "round_number": gs.round_number,
+            "results": [r.model_dump(mode='json') for r in gs.last_round_results],
+        })
+
+    async def _broadcast_game_finished(self, room_id: str) -> None:
+        """Broadcast game_finished with final leaderboard."""
+        room = self.rooms.get(room_id)
+        if not room or not room.game_state:
+            return
+        gs = room.game_state
+        leaderboard = sorted(
+            [{"id": p.id, "name": p.name, "score": p.cumulative_score} for p in gs.players],
+            key=lambda x: x["score"]
+        )
+        await self.broadcast_to_room(room_id, {
+            "type": "game_finished",
+            "leaderboard": leaderboard,
+        })
 
     # ------------------------------------------------------------------
     # Broadcast helpers

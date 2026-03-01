@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import WebSocket
 
 from game.room_manager import RoomManager, NUM_ROOMS
-from game.state import RoomStatus, LobbyPlayer
+from game.state import RoomStatus, LobbyPlayer, GamePhase, Card, Suit, Rank
 
 
 def make_ws() -> MagicMock:
@@ -473,7 +473,7 @@ class TestHandleStartGame:
         assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
 
     @pytest.mark.asyncio
-    async def test_start_game_broadcasts_game_starting_to_room(self, rm):
+    async def test_start_game_broadcasts_game_state_to_room(self, rm):
         ws1, ws2 = make_ws(), make_ws()
         for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
             await rm.join_room("room-1", pid, ws)
@@ -482,18 +482,19 @@ class TestHandleStartGame:
         ws2.send_json.reset_mock()
         await rm.handle_start_game("room-1")
         calls = [c[0][0] for c in ws1.send_json.call_args_list]
-        assert any(c.get("type") == "game_starting" for c in calls)
+        assert any(c.get("type") == "game_state" for c in calls)
 
     @pytest.mark.asyncio
-    async def test_start_game_game_starting_includes_players(self, rm):
+    async def test_start_game_game_state_includes_players(self, rm):
         ws1, ws2 = make_ws(), make_ws()
         for ws, pid, name in [(ws1, "p1", "Alice"), (ws2, "p2", "Bob")]:
             await rm.join_room("room-1", pid, ws)
             await rm.handle_join_lobby("room-1", pid, name)
         await rm.handle_start_game("room-1")
         calls = [c[0][0] for c in ws1.send_json.call_args_list]
-        game_starting = next(c for c in calls if c.get("type") == "game_starting")
-        names = [p["name"] for p in game_starting["players"]]
+        game_state_msg = next((c for c in calls if c.get("type") == "game_state"), None)
+        assert game_state_msg is not None
+        names = [p["name"] for p in game_state_msg["game"]["players"]]
         assert "Alice" in names and "Bob" in names
 
     @pytest.mark.asyncio
@@ -731,3 +732,116 @@ class TestInGameReconnect:
         assert not any(c.get("type") == "lobby_update" for c in calls), (
             "lobby_update must not be sent to GameRoom clients on disconnect"
         )
+
+
+# ---------------------------------------------------------------------------
+# handle_next_round
+# ---------------------------------------------------------------------------
+
+async def _start_game_in_room(rm, room_id="room-1", players=None):
+    """Helper: join lobby and start game for a set of (pid, name) pairs."""
+    if players is None:
+        players = [("p1", "Alice"), ("p2", "Bob")]
+    wss = {}
+    for pid, name in players:
+        ws = make_ws()
+        wss[pid] = ws
+        await rm.join_room(room_id, pid, ws)
+        await rm.handle_join_lobby(room_id, pid, name)
+    await rm.handle_start_game(room_id)
+    return wss
+
+
+class TestHandleNextRound:
+    @pytest.mark.asyncio
+    async def test_wrong_phase_rejected(self, rm):
+        """handle_next_round must be rejected when the game is still in PLAYING."""
+        await _start_game_in_room(rm)
+        ok, err = await rm.handle_next_round("room-1", "p1")
+        assert ok is False
+        assert err != ""
+
+    @pytest.mark.asyncio
+    async def test_partial_confirmation_does_not_advance(self, rm):
+        """Round must NOT advance when only one of two players has confirmed."""
+        wss = await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+
+        ok, err = await rm.handle_next_round("room-1", "p1")
+        assert ok is True
+        # Round number must still be 1
+        assert rm.rooms["room-1"].game_state.round_number == 1
+        # p1 must appear in the confirmed list
+        assert "p1" in rm.rooms["room-1"].game_state.next_round_confirmed_by
+
+    @pytest.mark.asyncio
+    async def test_all_confirmed_advances_round(self, rm):
+        """Round advances to round 2 only when both players have confirmed."""
+        await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+
+        await rm.handle_next_round("room-1", "p1")
+        await rm.handle_next_round("room-1", "p2")
+
+        gs = rm.rooms["room-1"].game_state
+        assert gs.round_number == 2
+        assert gs.phase == GamePhase.PLAYING
+
+    @pytest.mark.asyncio
+    async def test_confirmed_by_cleared_after_advance(self, rm):
+        """next_round_confirmed_by must be empty after the round has advanced."""
+        await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+
+        await rm.handle_next_round("room-1", "p1")
+        await rm.handle_next_round("room-1", "p2")
+
+        assert rm.rooms["room-1"].game_state.next_round_confirmed_by == []
+
+    @pytest.mark.asyncio
+    async def test_duplicate_click_is_idempotent(self, rm):
+        """Clicking twice must not add duplicate entries or error."""
+        await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+
+        ok1, _ = await rm.handle_next_round("room-1", "p1")
+        ok2, _ = await rm.handle_next_round("room-1", "p1")
+        assert ok1 is True
+        assert ok2 is True
+        assert rm.rooms["room-1"].game_state.next_round_confirmed_by.count("p1") == 1
+        # Round must still not have advanced (p2 hasn't confirmed)
+        assert rm.rooms["room-1"].game_state.round_number == 1
+
+    @pytest.mark.asyncio
+    async def test_no_active_game_rejected(self, rm):
+        ok, err = await rm.handle_next_round("room-1", "p1")
+        assert ok is False
+        assert err != ""
+
+    @pytest.mark.asyncio
+    async def test_game_finished_after_round_11(self, rm):
+        """Both players confirming on round 11 must transition to FINISHED."""
+        await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+        rm.rooms["room-1"].game_state.round_number = 11
+
+        await rm.handle_next_round("room-1", "p1")
+        await rm.handle_next_round("room-1", "p2")
+
+        assert rm.rooms["room-1"].game_state.phase == GamePhase.FINISHED
+
+    @pytest.mark.asyncio
+    async def test_partial_confirm_broadcasts_game_state(self, rm):
+        """After a partial confirmation the updated game_state must be broadcast
+        so the confirming player immediately sees 'Waiting for others…'."""
+        wss = await _start_game_in_room(rm)
+        rm.rooms["room-1"].game_state.phase = GamePhase.SCORING
+        wss["p1"].send_json.reset_mock()
+        wss["p2"].send_json.reset_mock()
+
+        await rm.handle_next_round("room-1", "p1")
+
+        p1_calls = [c[0][0] for c in wss["p1"].send_json.call_args_list]
+        p2_calls = [c[0][0] for c in wss["p2"].send_json.call_args_list]
+        assert any(c.get("type") == "game_state" for c in p1_calls)
+        assert any(c.get("type") == "game_state" for c in p2_calls)

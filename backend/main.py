@@ -103,6 +103,29 @@ async def room_websocket(
             elif msg_type == "end_game":
                 await room_manager.handle_end_game(room_id)
 
+            elif msg_type == "draw_card":
+                source = data.get("source", "pile")
+                ok, err = await room_manager.handle_draw_card(room_id, player_id, source)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "discard_card":
+                card_id = data.get("card_id", "")
+                ok, err = await room_manager.handle_discard_card(room_id, player_id, card_id)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "go_out":
+                card_id = data.get("card_id", "")
+                ok, err = await room_manager.handle_go_out(room_id, player_id, card_id)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "next_round":
+                ok, err = await room_manager.handle_next_round(room_id, player_id)
+                if not ok:
+                    await websocket.send_json({"type": "error", "message": err})
+
     except WebSocketDisconnect:
         pass
     finally:

@@ -86,6 +86,8 @@ To go out, a player:
 
 After a player goes out, each remaining player gets **one final turn** (clockwise), then the round ends and scoring takes place.
 
+Only one player may go out per round — the first player to do so. If a subsequent player, during their final turn, can arrange all their cards into valid sets and runs with one card left over, they score 0 points for the round but the game does not treat this as a new 'going out' event. The original going-out player remains recorded and the final turn sequence continues normally.
+
 ---
 
 ## Scoring
