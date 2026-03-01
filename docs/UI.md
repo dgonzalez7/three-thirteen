@@ -67,12 +67,10 @@ The player must choose one of:
 - Draw the top face-down card from the draw pile
 - Draw the top face-up card from the discard pile
 
-**Step 2 — Go Out or Discard**
+**Step 2 — Attempt to Go Out or Discard**
 After drawing, the player must either:
-- **Go out** — if all cards can be arranged into sets and runs with one card left to discard, the player must declare they are going out, lay their combinations face-up, and discard their final card
-- **Discard** — if the player cannot go out, they discard one card face-up onto the discard pile and play passes to the next player
-
-> **Going out is mandatory** if the player is able to do so after drawing.
+- **Discard** — select a card from their hand and discard it. Play passes to the next player.
+- **Attempt to Go Out** — click the "Go Out" button, then select the card to discard. The server validates that the remaining hand forms valid sets and runs with zero unmatched cards. If valid, the player goes out and scores 0. If invalid, the server rejects the action and the player must discard normally instead.
 
 ---
 
