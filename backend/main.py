@@ -1,6 +1,8 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uuid
+import os
 
 from game.room_manager import RoomManager
 
@@ -18,8 +20,8 @@ app.add_middleware(
 room_manager = RoomManager()
 
 
-@app.get("/")
-async def root():
+@app.get("/api/health")
+async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "message": "Three-Thirteen Game Server"}
 
@@ -130,6 +132,11 @@ async def room_websocket(
         pass
     finally:
         await room_manager.leave_room(room_id, player_id)
+
+
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")
 
 
 if __name__ == "__main__":

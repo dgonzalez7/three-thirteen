@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_ROOM_BASE = 'ws://localhost:8000/ws/room';
+const WS_ROOM_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/room`;
 
 const s = {
   page: {
