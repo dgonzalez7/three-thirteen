@@ -172,6 +172,12 @@ const s = {
     color: type === 'info' ? '#a5b4fc' : type === 'warn' ? '#fcd34d' : '#fca5a5',
   }),
   divider: { height: '1px', background: 'rgba(255,255,255,0.08)', width: '100%', maxWidth: '900px' },
+  subtleLink: {
+    background: 'none', border: 'none', padding: '0.25rem 0.5rem',
+    color: '#475569', fontSize: '0.78rem', fontWeight: 400,
+    cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'rgba(71,85,105,0.4)',
+    opacity: 0.8,
+  },
   scoringPanel: {
     width: '100%', maxWidth: '900px',
     background: 'rgba(255,255,255,0.04)',
@@ -588,7 +594,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
                   {isLast ? 'See Final Scores' : `Start Round ${roundResults.round_number + 1}`}
                 </button>
             }
-            <button style={s.btn('ghost', false)} onClick={handleEndGame}>
+            <button style={s.subtleLink} onClick={handleEndGame}>
               End Game
             </button>
           </div>
@@ -771,7 +777,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
       <div style={s.divider} />
 
       {/* Back button */}
-      <button style={s.btn('danger', false)} onClick={handleEndGame}>
+      <button style={s.subtleLink} onClick={handleEndGame}>
         End Game &amp; Return to Lobby
       </button>
     </div>
