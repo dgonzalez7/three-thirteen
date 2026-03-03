@@ -285,6 +285,10 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
     ws.onclose = () => { if (isMounted) setIsConnected(false); };
     ws.onerror = () => ws.close();
 
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+    }, 30000);
+
     ws.onmessage = (event) => {
       if (!isMounted) return;
       try {
@@ -330,6 +334,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
 
     return () => {
       isMounted = false;
+      clearInterval(pingInterval);
       if (wsRef.current === ws) {
         ws.close(1000, 'GameRoom unmounted');
         wsRef.current = null;

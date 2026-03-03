@@ -100,3 +100,22 @@
 - **Docker Compose**: Local development environment
 - **GitHub Actions**: CI/CD pipeline
 - **pytest**: Python testing framework
+
+## Deployment
+
+The application is deployed on Render.com as a single Docker container serving
+both the FastAPI backend and the React frontend (built as static files).
+
+- Production URL: https://three-thirteen.onrender.com
+- Deploys automatically on every push to `main`
+- Docker image built from the root `Dockerfile` (multi-stage: Node builds frontend, Python serves backend + static files)
+- Health check endpoint: `GET /api/health`
+- WebSockets are fully supported on Render (wss:// in production)
+- Free tier: instances spin down after inactivity — first load may be slow
+
+GitHub Actions (`deploy.yml`) still runs tests and builds/pushes to AWS ECR on
+every push to `main`, but Render handles deployment independently via GitHub
+integration. The AWS App Runner service still exists but is not the active
+deployment.
+
+Local development: `docker-compose up --build` at http://localhost:5173

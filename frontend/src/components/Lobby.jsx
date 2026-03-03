@@ -175,6 +175,7 @@ const Lobby = ({ onSelectRoom }) => {
 
   const wsRef = useRef(null);
   const retryTimer = useRef(null);
+  const pingInterval = useRef(null);
 
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState < 2) return;
@@ -185,6 +186,9 @@ const Lobby = ({ onSelectRoom }) => {
       ws.onopen = () => {
         setIsConnected(true);
         if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
+        pingInterval.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+        }, 30000);
       };
       ws.onmessage = (e) => {
         try {
@@ -194,6 +198,7 @@ const Lobby = ({ onSelectRoom }) => {
       };
       ws.onclose = () => {
         setIsConnected(false);
+        if (pingInterval.current) { clearInterval(pingInterval.current); pingInterval.current = null; }
         retryTimer.current = setTimeout(connect, 3000);
       };
       ws.onerror = () => ws.close();
@@ -206,6 +211,7 @@ const Lobby = ({ onSelectRoom }) => {
     connect();
     return () => {
       if (retryTimer.current) clearTimeout(retryTimer.current);
+      if (pingInterval.current) { clearInterval(pingInterval.current); pingInterval.current = null; }
       wsRef.current?.close(1000, 'Lobby unmounted');
     };
   }, [connect]);

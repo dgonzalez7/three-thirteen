@@ -243,6 +243,10 @@ const PlayerLobby = ({ roomId, roomName, onGameStarting, onBack }) => {
       ws.close();
     };
 
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+    }, 30000);
+
     ws.onmessage = (event) => {
       if (!isMounted) return;
       try {
@@ -277,6 +281,7 @@ const PlayerLobby = ({ roomId, roomName, onGameStarting, onBack }) => {
 
     return () => {
       isMounted = false;
+      clearInterval(pingInterval);
       if (wsRef.current === ws) {
         ws.close(1000, 'PlayerLobby unmounted');
         wsRef.current = null;

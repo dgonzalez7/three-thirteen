@@ -46,9 +46,9 @@ async def lobby_websocket(websocket: WebSocket):
     await room_manager.register_lobby_connection(connection_id, websocket)
 
     try:
-        # Keep the connection alive; lobby clients only receive, never send
         while True:
-            await websocket.receive_text()
+            msg = await websocket.receive_text()
+            # Silently ignore keepalive pings from the client
     except WebSocketDisconnect:
         pass
     finally:
@@ -128,6 +128,9 @@ async def room_websocket(
                 ok, err = await room_manager.handle_next_round(room_id, player_id)
                 if not ok:
                     await websocket.send_json({"type": "error", "message": err})
+
+            elif msg_type == "ping":
+                pass  # Keepalive — no response needed
 
     except WebSocketDisconnect:
         pass
