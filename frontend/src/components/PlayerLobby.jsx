@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_ROOM_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/room`;
+const WS_ROOM_BASE = import.meta.env.VITE_WS_URL
+  ? `${import.meta.env.VITE_WS_URL}/ws/room`
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/room`;
 
 const s = {
   page: {

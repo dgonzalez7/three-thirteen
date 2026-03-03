@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
-const WS_ROOM_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/room`;
+const WS_ROOM_BASE = import.meta.env.VITE_WS_URL
+  ? `${import.meta.env.VITE_WS_URL}/ws/room`
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/room`;
 
 // ---------------------------------------------------------------------------
 // Rank / suit display helpers
@@ -216,15 +218,28 @@ const s = {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function CardView({ card, selected, canSelect, onClick }) {
+function CardView({ card, selected, canSelect, onClick, dragging, dragOver, onDragStart, onDragEnter, onDragEnd, onDrop, onDragOver }) {
   const label = RANK_LABEL[card.rank];
   const suit = SUIT_SYMBOL[card.suit];
   const color = SUIT_COLOR[card.suit];
+  const extraStyle = dragging
+    ? { opacity: 0.35, transform: 'scale(0.93)' }
+    : dragOver
+      ? { transform: 'translateY(-10px)', borderColor: '#a5b4fc', boxShadow: '0 0 0 2px #6366f1' }
+      : selected
+        ? {}
+        : {};
   return (
     <div
-      style={{ ...s.handCard(selected, card.is_wild, canSelect), color }}
+      style={{ ...s.handCard(selected, card.is_wild, canSelect), color, ...extraStyle, transition: 'transform 0.12s, opacity 0.12s, border-color 0.12s' }}
       onClick={canSelect ? onClick : undefined}
       title={card.is_wild ? 'Wild card' : undefined}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDrop={onDrop}
     >
       <span style={{ fontSize: '1.05rem' }}>{label}</span>
       <span style={{ fontSize: '1.6rem' }}>{suit}</span>
@@ -265,8 +280,12 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
   const [roundResults, setRoundResults] = useState(null);
   const [leaderboard, setLeaderboard] = useState(null);
   const [error, setError] = useState('');
+  const [orderedHand, setOrderedHand] = useState([]);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [dragSrcIdxState, setDragSrcIdxState] = useState(null);
 
   const wsRef = useRef(null);
+  const dragSrcIdx = useRef(null);
   const onBackToLobbyRef = useRef(onBackToLobby);
   useEffect(() => { onBackToLobbyRef.current = onBackToLobby; }, [onBackToLobby]);
 
@@ -294,7 +313,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
       try {
         const data = JSON.parse(event.data);
         switch (data.type) {
-          case 'game_state':
+          case 'game_state': {
             console.log('[game_state] phase:', data.game.phase, 'round:', data.game.round_number, 'next_round_requested:', data.game.next_round_requested);
             setGame(data.game);
             setError('');
@@ -302,7 +321,19 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
               console.log('[game_state] clearing roundResults (phase=playing/final_turns)');
               setRoundResults(null);
             }
+            // Merge server hand with persisted order
+            const serverMe = data.game.players.find(p => p.id === myPlayerId);
+            const serverIds = (serverMe?.hand || []).map(c => c.id);
+            const storageKey = `hand-order-${myPlayerId}-${data.game.room_id || roomId}`;
+            let savedOrder = [];
+            try { savedOrder = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { savedOrder = []; }
+            const serverSet = new Set(serverIds);
+            const merged = savedOrder.filter(id => serverSet.has(id));
+            const mergedSet = new Set(merged);
+            serverIds.forEach(id => { if (!mergedSet.has(id)) merged.push(id); });
+            setOrderedHand(merged);
             break;
+          }
           case 'player_went_out':
             setWentOutMsg(`🃏 ${data.player_name} has gone out! Each remaining player gets one final turn.`);
             break;
@@ -418,6 +449,53 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
     setGoOutMode(false);
     setSelectedCardId(null);
     setError('');
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Drag-and-drop hand reordering
+  // ---------------------------------------------------------------------------
+  const storageKey = useMemo(
+    () => `hand-order-${myPlayerId}-${roomId}`,
+    [myPlayerId, roomId]
+  );
+
+  const handleDragStart = useCallback((idx) => {
+    dragSrcIdx.current = idx;
+    setDragSrcIdxState(idx);
+  }, []);
+
+  const handleDragEnter = useCallback((idx) => {
+    setDragOverIdx(idx);
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault(); // required to allow drop
+  }, []);
+
+  const handleDrop = useCallback((targetIdx) => {
+    const src = dragSrcIdx.current;
+    if (src === null || src === targetIdx) {
+      dragSrcIdx.current = null;
+      setDragSrcIdxState(null);
+      setDragOverIdx(null);
+      return;
+    }
+    setOrderedHand(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(src, 1);
+      next.splice(targetIdx, 0, moved);
+      try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+    dragSrcIdx.current = null;
+    setDragSrcIdxState(null);
+    setDragOverIdx(null);
+  }, [storageKey]);
+
+  const handleDragEnd = useCallback(() => {
+    dragSrcIdx.current = null;
+    setDragSrcIdxState(null);
+    setDragOverIdx(null);
   }, []);
 
   const handleNextRound = useCallback(() => {
@@ -622,15 +700,30 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
           )}
         </div>
         <div style={s.handArea}>
-          {(me?.hand || []).map(card => (
-            <CardView
-              key={card.id}
-              card={card}
-              selected={selectedCardId === card.id}
-              canSelect={canDiscard || goOutMode}
-              onClick={() => handleCardClick(card.id)}
-            />
-          ))}
+          {(() => {
+            const handMap = new Map((me?.hand || []).map(c => [c.id, c]));
+            const displayIds = orderedHand.length > 0 ? orderedHand : (me?.hand || []).map(c => c.id);
+            return displayIds.map((id, idx) => {
+              const card = handMap.get(id);
+              if (!card) return null;
+              return (
+                <CardView
+                  key={card.id}
+                  card={card}
+                  selected={selectedCardId === card.id}
+                  canSelect={canDiscard || goOutMode}
+                  onClick={() => handleCardClick(card.id)}
+                  dragging={dragSrcIdxState === idx}
+                  dragOver={dragOverIdx === idx}
+                  onDragStart={() => handleDragStart(idx)}
+                  onDragEnter={() => handleDragEnter(idx)}
+                  onDragOver={handleDragOver}
+                  onDrop={() => handleDrop(idx)}
+                  onDragEnd={handleDragEnd}
+                />
+              );
+            });
+          })()}
           {(!me?.hand || me.hand.length === 0) && (
             <span style={{ color: '#334155', fontSize: '0.85rem' }}>No cards</span>
           )}

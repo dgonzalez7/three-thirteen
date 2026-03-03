@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_LOBBY_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/lobby`;
+const WS_LOBBY_URL = import.meta.env.VITE_WS_URL
+  ? `${import.meta.env.VITE_WS_URL}/ws/lobby`
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/lobby`;
 
 const STATUS_META = {
   empty: {

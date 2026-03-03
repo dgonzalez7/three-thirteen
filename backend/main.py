@@ -40,16 +40,19 @@ async def lobby_websocket(websocket: WebSocket):
     The server sends a `rooms_update` event immediately on connect and again
     whenever any room's state changes.
     """
-    await websocket.accept()
-    connection_id = str(uuid.uuid4())
+    try:
+        await websocket.accept()
+    except (RuntimeError, WebSocketDisconnect):
+        return
 
+    connection_id = str(uuid.uuid4())
     await room_manager.register_lobby_connection(connection_id, websocket)
 
     try:
         while True:
             msg = await websocket.receive_text()
             # Silently ignore keepalive pings from the client
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         await room_manager.unregister_lobby_connection(connection_id)
@@ -65,24 +68,34 @@ async def room_websocket(
 
     Query param `player_id` must be supplied by the client.
     """
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except (RuntimeError, WebSocketDisconnect):
+        return
 
     success, error_msg = await room_manager.join_room(room_id, player_id, websocket)
 
     if not success:
-        await websocket.send_json({"type": "error", "message": error_msg})
-        await websocket.close()
+        try:
+            await websocket.send_json({"type": "error", "message": error_msg})
+            await websocket.close()
+        except (RuntimeError, WebSocketDisconnect):
+            pass
         return
 
     # Send the current lobby state immediately so late-joiners see who is
     # already waiting (Bug 1 fix).
-    room = room_manager.get_room(room_id)
-    await websocket.send_json({
-        "type": "lobby_update",
-        "room_id": room_id,
-        "players": [{"id": p.id, "name": p.name} for p in room.lobby_players],
-        "status": room.status.value,
-    })
+    try:
+        room = room_manager.get_room(room_id)
+        await websocket.send_json({
+            "type": "lobby_update",
+            "room_id": room_id,
+            "players": [{"id": p.id, "name": p.name} for p in room.lobby_players],
+            "status": room.status.value,
+        })
+    except (RuntimeError, WebSocketDisconnect):
+        await room_manager.leave_room(room_id, player_id)
+        return
 
     try:
         while True:
@@ -132,7 +145,7 @@ async def room_websocket(
             elif msg_type == "ping":
                 pass  # Keepalive — no response needed
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         await room_manager.leave_room(room_id, player_id)
