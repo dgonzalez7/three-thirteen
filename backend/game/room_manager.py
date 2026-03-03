@@ -10,6 +10,7 @@ from .engine import (
 )
 
 NUM_ROOMS = 10
+ABANDON_TIMEOUT_SECONDS = 300  # 5 minutes
 
 class RoomManager:
     """Manages the fixed set of 10 game rooms and all player connections.
@@ -28,6 +29,8 @@ class RoomManager:
         self.lobby_connections: Dict[str, WebSocket] = {}
         # Reverse map: player_id → room_id for cleanup on unexpected disconnect
         self.player_room_map: Dict[str, str] = {}
+        # Pending abandon-cleanup tasks: room_id → asyncio.Task
+        self._cleanup_timers: Dict[str, asyncio.Task] = {}
 
         self._init_rooms()
 
@@ -44,6 +47,49 @@ class RoomManager:
                 room_name=f"Room {i}",
             )
             self.room_connections[room_id] = {}
+
+    # ------------------------------------------------------------------
+    # Abandoned-room cleanup
+    # ------------------------------------------------------------------
+
+    def _schedule_cleanup(self, room_id: str) -> None:
+        """Start a countdown to reset room_id if no one reconnects."""
+        self._cancel_cleanup(room_id)  # cancel any existing timer first
+        self._cleanup_timers[room_id] = asyncio.create_task(
+            self._cleanup_after_delay(room_id)
+        )
+
+    def _cancel_cleanup(self, room_id: str) -> None:
+        """Cancel a pending cleanup timer for room_id, if any."""
+        task = self._cleanup_timers.pop(room_id, None)
+        if task is not None:
+            task.cancel()
+
+    async def _cleanup_after_delay(self, room_id: str) -> None:
+        """Wait ABANDON_TIMEOUT_SECONDS then reset the room to its initial state."""
+        try:
+            await asyncio.sleep(ABANDON_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            return
+        # Timer expired — reset the room
+        self._cleanup_timers.pop(room_id, None)
+        await self._reset_room(room_id)
+
+    async def _reset_room(self, room_id: str) -> None:
+        """Reset a room to its empty initial state, clearing all players and game."""
+        if room_id not in self.rooms:
+            return
+        room = self.rooms[room_id]
+        players_to_clear = list(room.player_ids)
+        room.status = RoomStatus.EMPTY
+        room.player_ids = []
+        room.lobby_players = []
+        room.player_count = 0
+        room.game_state = None
+        self.room_connections[room_id] = {}
+        for pid in players_to_clear:
+            self.player_room_map.pop(pid, None)
+        await self._broadcast_rooms_to_lobby()
 
     # ------------------------------------------------------------------
     # Lobby connections (clients watching the room list)
@@ -81,6 +127,7 @@ class RoomManager:
             if player_id in room.player_ids or any(p.id == player_id for p in room.lobby_players):
                 self.room_connections[room_id][player_id] = websocket
                 self.player_room_map[player_id] = room_id
+                self._cancel_cleanup(room_id)
                 # Immediately replay the current game state so the reconnecting
                 # client doesn't miss the broadcast that fired before its WS opened.
                 if room.game_state is not None:
@@ -100,6 +147,7 @@ class RoomManager:
             # Just update their WebSocket reference — do not modify room state.
             self.room_connections[room_id][player_id] = websocket
             self.player_room_map[player_id] = room_id
+            self._cancel_cleanup(room_id)
             return True, ""
 
         if room.player_count >= room.max_players:
@@ -134,6 +182,8 @@ class RoomManager:
             # player_ids, lobby_players, player_count, or status here.
             # Just broadcast the updated room list so the lobby reflects
             # current connection count without changing game state.
+            if not self.room_connections[room_id]:
+                self._schedule_cleanup(room_id)
             await self._broadcast_rooms_to_lobby()
             return True
 

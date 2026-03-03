@@ -1,8 +1,9 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import WebSocket
 
-from game.room_manager import RoomManager, NUM_ROOMS
+from game.room_manager import RoomManager, NUM_ROOMS, ABANDON_TIMEOUT_SECONDS
 from game.state import RoomStatus, LobbyPlayer, GamePhase, Card, Suit, Rank
 
 
@@ -845,3 +846,118 @@ class TestHandleNextRound:
         p2_calls = [c[0][0] for c in wss["p2"].send_json.call_args_list]
         assert any(c.get("type") == "game_state" for c in p1_calls)
         assert any(c.get("type") == "game_state" for c in p2_calls)
+
+
+# ---------------------------------------------------------------------------
+# Abandoned-room cleanup
+# ---------------------------------------------------------------------------
+
+class TestAbandonedRoomCleanup:
+    @pytest.mark.asyncio
+    async def test_cleanup_timer_scheduled_when_last_player_leaves_in_game(self, rm):
+        """When the last connection drops during IN_GAME a cleanup task must be created."""
+        wss = await _start_game_in_room(rm)
+        await rm.leave_room("room-1", "p1")
+        # p2 still connected — no timer yet
+        assert "room-1" not in rm._cleanup_timers
+
+        await rm.leave_room("room-1", "p2")
+        # All connections gone — timer must have been scheduled
+        assert "room-1" in rm._cleanup_timers
+        # Cancel to avoid warnings after the test
+        rm._cancel_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_timer_cancelled_on_reconnect_in_game(self, rm):
+        """If a player reconnects before the timer fires, the timer must be cancelled."""
+        wss = await _start_game_in_room(rm)
+        # Both players disconnect
+        await rm.leave_room("room-1", "p1")
+        await rm.leave_room("room-1", "p2")
+        assert "room-1" in rm._cleanup_timers
+
+        # p1 reconnects
+        new_ws = make_ws()
+        ok, _ = await rm.join_room("room-1", "p1", new_ws)
+        assert ok is True
+        assert "room-1" not in rm._cleanup_timers
+
+    @pytest.mark.asyncio
+    async def test_cleanup_timer_cancelled_on_reconnect_gathering(self, rm):
+        """_cancel_cleanup is also called when a player reconnects during GATHERING."""
+        await rm.join_room("room-1", "p1", make_ws())
+        # Manually plant a timer to verify it gets cancelled
+        rm._cleanup_timers["room-1"] = asyncio.create_task(asyncio.sleep(9999))
+
+        new_ws = make_ws()
+        await rm.join_room("room-1", "p1", new_ws)
+        assert "room-1" not in rm._cleanup_timers
+
+    @pytest.mark.asyncio
+    async def test_reset_room_clears_state(self, rm):
+        """_reset_room must clear players, game state, connections, and set status EMPTY."""
+        wss = await _start_game_in_room(rm)
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+        await rm._reset_room("room-1")
+
+        room = rm.rooms["room-1"]
+        assert room.status == RoomStatus.EMPTY
+        assert room.player_ids == []
+        assert room.lobby_players == []
+        assert room.player_count == 0
+        assert room.game_state is None
+        assert rm.room_connections["room-1"] == {}
+
+    @pytest.mark.asyncio
+    async def test_reset_room_clears_player_room_map(self, rm):
+        """_reset_room must remove all player → room reverse mappings."""
+        wss = await _start_game_in_room(rm)
+        assert "p1" in rm.player_room_map
+        assert "p2" in rm.player_room_map
+
+        await rm._reset_room("room-1")
+
+        assert "p1" not in rm.player_room_map
+        assert "p2" not in rm.player_room_map
+
+    @pytest.mark.asyncio
+    async def test_reset_room_broadcasts_rooms_update(self, rm):
+        """_reset_room must push a rooms_update to lobby watchers."""
+        lobby_ws = make_ws()
+        await rm.register_lobby_connection("lobby-1", lobby_ws)
+        wss = await _start_game_in_room(rm)
+        lobby_ws.send_json.reset_mock()
+
+        await rm._reset_room("room-1")
+
+        calls = [c[0][0] for c in lobby_ws.send_json.call_args_list]
+        assert any(c.get("type") == "rooms_update" for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_room_joinable_again_after_reset(self, rm):
+        """After _reset_room the room must accept new players."""
+        wss = await _start_game_in_room(rm)
+        await rm._reset_room("room-1")
+
+        ok, _ = await rm.join_room("room-1", "newcomer", make_ws())
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_cleanup_fires_after_timeout(self, rm):
+        """After the timeout elapses the room must be reset automatically."""
+        wss = await _start_game_in_room(rm)
+        assert rm.rooms["room-1"].status == RoomStatus.IN_GAME
+
+        # Drop all connections — timer is now scheduled
+        await rm.leave_room("room-1", "p1")
+        await rm.leave_room("room-1", "p2")
+        rm._cancel_cleanup("room-1")  # cancel the real 5-min task
+
+        # Run the cleanup coroutine directly with sleep mocked to return immediately
+        with patch("game.room_manager.asyncio.sleep", new_callable=AsyncMock):
+            await rm._cleanup_after_delay("room-1")
+
+        assert rm.rooms["room-1"].status == RoomStatus.EMPTY
+        assert rm.rooms["room-1"].player_ids == []
+        assert rm.rooms["room-1"].game_state is None
