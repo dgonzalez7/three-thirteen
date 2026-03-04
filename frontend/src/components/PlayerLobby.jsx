@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import RulesModal from './RulesModal';
 
 const WS_ROOM_BASE = import.meta.env.VITE_WS_URL
   ? `${import.meta.env.VITE_WS_URL}/ws/room`
@@ -435,6 +436,7 @@ const PlayerLobby = ({ roomId, roomName, onGameStarting, onBack }) => {
           </>
         )}
       </div>
+      <RulesModal />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import RulesModal from './RulesModal';
 
 const WS_ROOM_BASE = import.meta.env.VITE_WS_URL
   ? `${import.meta.env.VITE_WS_URL}/ws/room`
@@ -780,6 +781,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
       <button style={s.subtleLink} onClick={handleEndGame}>
         End Game &amp; Return to Lobby
       </button>
+      <RulesModal />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import RulesModal from './RulesModal';
 
 const WS_LOBBY_URL = import.meta.env.VITE_WS_URL
   ? `${import.meta.env.VITE_WS_URL}/ws/lobby`
@@ -268,6 +269,7 @@ const Lobby = ({ onSelectRoom }) => {
           </div>
         ))}
       </div>
+      <RulesModal />
     </div>
   );
 };

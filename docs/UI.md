@@ -25,30 +25,34 @@ The game room screen displays the following at all times:
 The screen is shown from each player's own **vantage point** — they always see themselves at the bottom of the table. Other players are arranged above, suggesting a clockwise seating order.
 
 ```
-┌─────────────────────────────────────┐
-│  Round 3 — Wild Card: 5s            │
-│                                     │
-│  Other Players:                     │
-│                                     │
-│  Matt          ♦ Judi ♦             │
-│  Score: 17     Score: 42            │
-│                                     │
-│  [ Draw Pile 🂠 ]  [ Discard: K♥ ]  │
-│                                     │
-│  Dave — Score: 22                   │
-│  Hand:                              │
-│  [3♠][3♥][5♣][7♦][9♠][K♣]          │
-│                                     │
-│  [ Draw from Pile ]                 │
-│  [ Draw from Discard ]              │
-│  [ Discard a Card ]                 │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  Round 3 — Wild Card: 5s                │
+│                                         │
+│  Other Players:                         │
+│                                         │
+│  Matt          ♦ Judi ♦                 │
+│  Score: 17     Score: 42                │
+│                                         │
+│  [ Draw Pile 🂠 ]  [ Discard: K♥ ]       │
+│                                         │
+│  Dave — Score: 22                       │
+│  Hand:                                  │
+│  [3♠][3♥][5♣][7♦][9♠][K♣]               │
+│                                         │
+│  [ Draw from Pile ]                     │ 
+│  [ Draw from Discard ]                  │
+│  [ Discard a Card ]                     |
+│                               [ Rules]  |
+└─────────────────────────────────────────┘
+
 ```
 
 - The **current player** (Dave in this example) is always shown at the bottom
 - Other players are arranged across the top, left to right in clockwise order
 - ♦ diamonds ♦ around a name indicate it is that player's turn
 - Other players' cards are **not shown** — only their card count is visible
+- A "Rules" button is always visible in the lower righthand of the screen.  This brings up a rolling scroll window with the rules of the game.  The window can be closed by clicking the "X" button in the top righthand corner.
+
 
 ---
 

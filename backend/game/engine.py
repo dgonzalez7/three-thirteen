@@ -451,5 +451,10 @@ def _next_player(gs: GameState) -> GameState:
         if gs.phase == GamePhase.FINAL_TURNS and candidate.has_gone_out:
             continue
         break
+    # If every player has now gone out, end the round immediately
+    if gs.phase == GamePhase.FINAL_TURNS and gs.players[gs.current_player_index].has_gone_out:
+        gs.phase = GamePhase.SCORING
+        gs.last_round_results = compute_round_results(gs)
+        return gs
     gs.turn_phase = TurnPhase.DRAW
     return gs
