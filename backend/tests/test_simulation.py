@@ -110,12 +110,25 @@ def _bot_take_turn(gs, rng: random.Random):
     """
     player = gs.players[gs.current_player_index]
 
+    late_game = gs.round_number >= 8
+
     # --- Draw phase ---
     if gs.turn_phase == TurnPhase.DRAW:
-        # Prefer discard 30% of the time; fall back if the chosen pile is empty
-        use_discard = bool(gs.discard_pile) and (
-            not gs.draw_pile or rng.random() < 0.30
-        )
+        use_discard = False
+        if gs.discard_pile:
+            discard_top = gs.discard_pile[-1]
+            if late_game:
+                # Heuristic: take discard if its rank matches any card already in hand
+                hand_ranks = {c.rank for c in player.hand}
+                use_discard = discard_top.rank in hand_ranks
+            else:
+                current_score = score_hand(player.hand, gs.wild_rank)
+                candidate_hand = player.hand + [discard_top]
+                worst = max(candidate_hand, key=lambda c: score_hand([x for x in candidate_hand if x is not c], gs.wild_rank))
+                new_score = score_hand([x for x in candidate_hand if x is not worst], gs.wild_rank)
+                use_discard = new_score < current_score
+        if not use_discard and not gs.draw_pile:
+            use_discard = True
         if use_discard:
             gs, err = draw_from_discard(gs, player.id)
         else:
@@ -123,16 +136,29 @@ def _bot_take_turn(gs, rng: random.Random):
         assert err is None, f"Draw error for {player.name}: {err}"
         _assert_invariants(gs, f"after draw by {player.name} r{gs.round_number}")
 
-    # --- Discard phase: pick the card that minimises the remaining hand score ---
+    # --- Discard phase ---
     player = gs.players[gs.current_player_index]
     assert gs.turn_phase == TurnPhase.DISCARD, (
         f"Expected DISCARD turn_phase after draw, got {gs.turn_phase}"
     )
 
-    best_card = min(
-        player.hand,
-        key=lambda c: score_hand([x for x in player.hand if x is not c], gs.wild_rank),
-    )
+    if late_game:
+        # Heuristic: discard highest RANK_POINTS card that is not wild and not in a pair
+        hand_rank_counts = {}
+        for c in player.hand:
+            hand_rank_counts[c.rank] = hand_rank_counts.get(c.rank, 0) + 1
+        non_pair_non_wild = [
+            c for c in player.hand
+            if c.rank != gs.wild_rank and hand_rank_counts[c.rank] < 2
+        ]
+        candidates = non_pair_non_wild if non_pair_non_wild else list(player.hand)
+        best_card = max(candidates, key=lambda c: RANK_POINTS.get(c.rank, 0))
+    else:
+        best_card = min(
+            player.hand,
+            key=lambda c: score_hand([x for x in player.hand if x is not c], gs.wild_rank),
+        )
+
     remaining_after_best = [x for x in player.hand if x is not best_card]
 
     if score_hand(remaining_after_best, gs.wild_rank) == 0:
@@ -156,6 +182,11 @@ def _play_round(gs, rng: random.Random, n_players: int = 0, game_num: int = 0) -
             pytest.fail(
                 f"Round did not complete within {max_turns} turns — possible infinite loop "
                 f"(players={n_players}, game={game_num}, round={gs.round_number})"
+            )
+        if turns > 0 and turns % 50 == 0:
+            print(
+                f"[sim] players={n_players} game={game_num} round={gs.round_number} turn={turns}",
+                flush=True,
             )
         gs = _bot_take_turn(gs, rng)
         turns += 1
