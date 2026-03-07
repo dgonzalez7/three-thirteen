@@ -136,7 +136,7 @@ const s = {
     // borderColor is set as a longhand so dragOver's borderColor override
     // can be cleanly removed by React's style diffing without the `border`
     // shorthand reasserting a stale color value.
-    borderColor: selected ? '#6366f1' : isWild ? '#fcd34d' : 'rgba(255,255,255,0.15)',
+    borderColor: selected ? '#6366f1' : isWild ? '#fcd34d' : 'rgba(255,255,255,0.45)',
     borderRadius: '8px',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
     cursor: canSelect ? 'pointer' : 'default',
