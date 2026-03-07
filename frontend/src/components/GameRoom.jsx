@@ -126,7 +126,7 @@ const s = {
   handArea: {
     display: 'flex', flexWrap: 'wrap', gap: '0.4rem',
   },
-  handCard: (selected, isWild, canSelect) => ({
+  handCard: (selected, isWild, canSelect, suitColor) => ({
     width: '54px', height: '80px',
     background: selected
       ? 'rgba(99,102,241,0.3)'
@@ -136,12 +136,12 @@ const s = {
     // borderColor is set as a longhand so dragOver's borderColor override
     // can be cleanly removed by React's style diffing without the `border`
     // shorthand reasserting a stale color value.
-    borderColor: selected ? '#6366f1' : isWild ? '#fcd34d' : 'rgba(255,255,255,0.45)',
+    borderColor: selected ? '#6366f1' : isWild ? '#fcd34d' : (suitColor || 'rgba(255,255,255,0.45)'),
     borderRadius: '8px',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
     cursor: canSelect ? 'pointer' : 'default',
     fontSize: '0.82rem', fontWeight: 700,
-    transition: 'transform 0.1s, border-color 0.15s',
+    transition: 'transform 0.1s',
     transform: selected ? 'translateY(-6px)' : 'none',
     userSelect: 'none',
   }),
@@ -243,7 +243,7 @@ function CardView({ card, selected, canSelect, onClick, dragging, dragOver, onDr
       : {};
   return (
     <div
-      style={{ ...s.handCard(selected, card.is_wild, canSelect), color, ...extraStyle, transition: 'transform 0.12s, opacity 0.12s, border-color 0.12s' }}
+      style={{ ...s.handCard(selected, card.is_wild, canSelect, color), color, ...extraStyle, transition: 'transform 0.12s, opacity 0.12s' }}
       onClick={canSelect ? onClick : undefined}
       title={card.is_wild ? 'Wild card' : undefined}
       draggable
