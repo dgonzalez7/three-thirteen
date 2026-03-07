@@ -131,7 +131,12 @@ const s = {
     background: selected
       ? 'rgba(99,102,241,0.3)'
       : isWild ? 'rgba(251,191,36,0.1)' : 'rgba(255,255,255,0.06)',
-    border: `2px solid ${selected ? '#6366f1' : isWild ? '#fcd34d' : 'rgba(255,255,255,0.15)'}`,
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    // borderColor is set as a longhand so dragOver's borderColor override
+    // can be cleanly removed by React's style diffing without the `border`
+    // shorthand reasserting a stale color value.
+    borderColor: selected ? '#6366f1' : isWild ? '#fcd34d' : 'rgba(255,255,255,0.15)',
     borderRadius: '8px',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
     cursor: canSelect ? 'pointer' : 'default',
@@ -225,17 +230,17 @@ const s = {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function CardView({ card, selected, canSelect, onClick, dragging, dragOver, onDragStart, onDragEnter, onDragEnd, onDrop, onDragOver }) {
+function CardView({ card, selected, canSelect, onClick, dragging, dragOver, onDragStart, onDragEnter, onDragLeave, onDragEnd, onDrop, onDragOver }) {
   const label = RANK_LABEL[card.rank];
   const suit = SUIT_SYMBOL[card.suit];
   const color = SUIT_COLOR[card.suit];
+  // extraStyle uses borderColor (longhand) which now matches the longhand used
+  // in s.handCard — React will cleanly set/remove it without shorthand collision.
   const extraStyle = dragging
     ? { opacity: 0.35, transform: 'scale(0.93)' }
     : dragOver
       ? { transform: 'translateY(-10px)', borderColor: '#a5b4fc', boxShadow: '0 0 0 2px #6366f1' }
-      : selected
-        ? {}
-        : {};
+      : {};
   return (
     <div
       style={{ ...s.handCard(selected, card.is_wild, canSelect), color, ...extraStyle, transition: 'transform 0.12s, opacity 0.12s, border-color 0.12s' }}
@@ -244,6 +249,7 @@ function CardView({ card, selected, canSelect, onClick, dragging, dragOver, onDr
       draggable
       onDragStart={onDragStart}
       onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
       onDrop={onDrop}
@@ -473,6 +479,10 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
 
   const handleDragEnter = useCallback((idx) => {
     setDragOverIdx(idx);
+  }, []);
+
+  const handleDragLeave = useCallback((idx) => {
+    setDragOverIdx(prev => prev === idx ? null : prev);
   }, []);
 
   const handleDragOver = useCallback((e) => {
@@ -724,6 +734,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
                   dragOver={dragOverIdx === idx}
                   onDragStart={() => handleDragStart(idx)}
                   onDragEnter={() => handleDragEnter(idx)}
+                  onDragLeave={() => handleDragLeave(idx)}
                   onDragOver={handleDragOver}
                   onDrop={() => handleDrop(idx)}
                   onDragEnd={handleDragEnd}
