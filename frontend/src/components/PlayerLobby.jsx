@@ -437,6 +437,9 @@ const PlayerLobby = ({ roomId, roomName, onGameStarting, onBack }) => {
         )}
       </div>
       <RulesModal />
+      <footer style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'center', paddingTop: '1.5rem', paddingBottom: '0.5rem' }}>
+        Copyright 2026 Alea Iacta Est Game Foundry
+      </footer>
     </div>
   );
 };

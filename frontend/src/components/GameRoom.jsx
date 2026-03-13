@@ -534,6 +534,9 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
         <div style={s.notice('info')}>
           {isConnected ? 'Waiting for game state…' : 'Connecting…'}
         </div>
+        <footer style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'center', paddingTop: '1.5rem', paddingBottom: '0.5rem' }}>
+          Copyright 2026 Alea Iacta Est Game Foundry
+        </footer>
       </div>
     );
   }
@@ -559,6 +562,9 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
             Back to Lobby
           </button>
         </div>
+        <footer style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'center', paddingTop: '1.5rem', paddingBottom: '0.5rem' }}>
+          Copyright 2026 Alea Iacta Est Game Foundry
+        </footer>
       </div>
     );
   }
@@ -610,6 +616,9 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
             </button>
           </div>
         </div>
+        <footer style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'center', paddingTop: '1.5rem', paddingBottom: '0.5rem' }}>
+          Copyright 2026 Alea Iacta Est Game Foundry
+        </footer>
       </div>
     );
   }
@@ -793,6 +802,9 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
         End Game &amp; Return to Lobby
       </button>
       <RulesModal />
+      <footer style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'center', paddingTop: '1.5rem', paddingBottom: '0.5rem' }}>
+        Copyright 2026 Alea Iacta Est Game Foundry
+      </footer>
     </div>
   );
 };
