@@ -53,7 +53,12 @@ The screen is shown from each player's own **vantage point** — they always see
 - Other players' cards are **not shown** — only their card count is visible
 - A "Rules" button is always visible in the lower righthand of the screen.  This brings up a rolling scroll window with the rules of the game.  The window can be closed by clicking the "X" button in the top righthand corner.
 
+Copyright Footer
+A discreet copyright notice is displayed at the very bottom of every screen:
 
+Copyright 2026 Alea Iacta Est Game Foundry
+
+The footer should be unobtrusive — small text, low contrast, not competing with game elements.
 ---
 
 ## Game Controls

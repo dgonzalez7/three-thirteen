@@ -492,6 +492,7 @@ The game screen is rendered from each player's own vantage point:
 - **Scores**: cumulative scores displayed for all players at all times.
 - **"Go Out" message**: when a player goes out, all players see: _"🃏 [Player Name] has gone out! Each remaining player gets one final turn."_ This message persists while final turns are taken.
 - **End of game**: final scores ranked from lowest (winner) to highest.
+- **Copyright footer**: a discreet copyright notice — "Copyright 2026 Alea Iacta Est Game Foundry" — is displayed at the very bottom of every screen (Lobby, PlayerLobby, and GameRoom). It uses small text and low contrast so it does not compete with game elements.
 
 ### WebSocket Management
 
