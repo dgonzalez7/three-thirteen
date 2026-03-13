@@ -33,7 +33,7 @@ The application is a single deployable unit: a FastAPI backend serves both the W
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.11+, FastAPI, Pydantic, WebSockets |
-| Frontend | React 18, Vite, Tailwind CSS |
+| Frontend | React 18, Vite, inline styles |
 | State store | In-memory only (no database) |
 | Deployment | Docker (single container), Render.com |
 
