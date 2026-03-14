@@ -782,7 +782,7 @@ const GameRoom = ({ roomId, roomName, myPlayerId, myName, onBackToLobby }) => {
                   onClick={handleEnterGoOutMode}
                   title="Server validates your remaining hand forms valid sets/runs"
                 >
-                  Go Out
+                  {game.gone_out_player_id ? 'Push' : 'Go Out'}
                 </button>
                 {selectedCardId && (
                   <button style={s.btn('ghost', false)} onClick={() => setSelectedCardId(null)}>
