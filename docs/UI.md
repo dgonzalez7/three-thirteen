@@ -79,7 +79,7 @@ The player must choose one of:
 **Step 2 — Attempt to Go Out or Discard**
 After drawing, the player must either:
 - **Discard** — select a card from their hand and discard it. Play passes to the next player.
-- **Attempt to Go Out** — click the "Go Out" button, then select the card to discard. The server validates that the remaining hand forms valid sets and runs with zero unmatched cards. If valid, the player goes out and scores 0. If invalid, the server rejects the action and the player must discard normally instead.
+- **Attempt to Go Out** — click the "Go Out" button, then select the card to discard. The server validates that the remaining hand forms valid sets and runs with zero unmatched cards. If valid, the player goes out and scores 0. If invalid, the server rejects the action and the player must discard normally instead.  The "Go Out" button is relabeled "Push" when at least one other player has already gone out in the current round. Behavior, placement, and styling are unchanged — only the label differs.
 
 ---
 

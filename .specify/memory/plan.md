@@ -1,133 +1,84 @@
-# Implementation Plan: Copyright Footer
+# Implementation Plan: "Push" Label for Go Out Button
 
-**Branch**: `main` | **Date**: 2026-03-12 | **Spec**: `.specify/memory/spec.md` §8 UI Layout — Copyright footer  
+**Branch**: `main` | **Date**: 2026-03-14 | **Spec**: `.specify/memory/spec.md`  
 **Input**: Feature specification from `.specify/memory/spec.md`
 
----
+**Note**: This is a brownfield plan covering the Three-Thirteen codebase as it exists today, plus the targeted change to relabel the "Go Out" button as "Push" when at least one other player has already gone out in the current round.
 
 ## Summary
 
-Add a discreet "Copyright 2026 Alea Iacta Est Game Foundry" notice to the bottom of every screen. The notice must use small text and low contrast so it does not compete with game elements. This is a **frontend-only change** — no backend code, no data model, no WebSocket messages, and no new dependencies are required.
-
-Three React components are affected: `Lobby.jsx`, `PlayerLobby.jsx`, and `GameRoom.jsx`.
-
----
+The primary requirement is a **purely cosmetic frontend label change**: the "Go Out" action button in `GameRoom.jsx` must display "Push" instead of "Go Out" whenever `game.gone_out_player_id` is non-null and the viewing player has not yet gone out. No server changes are required — the condition is already fully expressed in the `game_state` payload (`gone_out_player_id`). The implementation is a one-line conditional in the button's label expression.
 
 ## Technical Context
 
-**Language/Version**: JavaScript (JSX), React 18  
-**Primary Dependencies**: Tailwind CSS (already configured)  
-**Storage**: N/A  
-**Testing**: Visual verification only — no logic to unit-test  
-**Target Platform**: Browser (desktop, same as rest of v1)  
-**Project Type**: Web application (frontend)  
-**Performance Goals**: No impact — static text node  
-**Constraints**: Must not interfere with any existing layout or game element  
-**Scale/Scope**: 3 component files, 1–3 lines of JSX each
-
----
+**Language/Version**: Python 3.11+ (backend) / JavaScript ESNext with JSX (frontend)  
+**Primary Dependencies**: FastAPI, Pydantic, WebSockets (backend); React 18, Vite (frontend)  
+**Storage**: In-memory only — no database, no persistence layer  
+**Testing**: pytest (backend unit + integration); no frontend test framework currently present  
+**Target Platform**: Linux server (Render.com, Docker); browser (Chrome/Firefox/Safari)  
+**Project Type**: Real-time multiplayer web application  
+**Performance Goals**: No new performance requirements — this is a label change  
+**Constraints**: No new dependencies allowed (Constitution §V — Simplicity & In-Memory First); frontend must remain plain JavaScript (no TypeScript migration)  
+**Scale/Scope**: Up to 10 concurrent rooms, 2–8 players per room
 
 ## Constitution Check
 
-*GATE: Must pass before implementation.*
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| I. Server-Authoritative Architecture | ✅ PASS | No game logic on client. Static text only. |
-| II. Real-Time Event-Driven Communication | ✅ PASS | No WebSocket changes. |
-| III. Atomic & Immutable State Management | ✅ PASS | No state changes. |
-| IV. Testable Game Engine | ✅ PASS | No engine changes. |
-| V. Simplicity & In-Memory First | ✅ PASS | No new dependencies or infrastructure. |
+| **I. Server-Authoritative Architecture** | ✅ PASS | Label change is purely presentational. The condition (`gone_out_player_id != null`) is derived from server-provided `game_state`. No client-side game logic added. |
+| **II. Real-Time Event-Driven Communication** | ✅ PASS | No changes to WebSocket protocol or broadcast mechanics. |
+| **III. Atomic & Immutable State Management** | ✅ PASS | No state model changes. `gone_out_player_id` already exists in `GameState`. |
+| **IV. Testable Game Engine** | ✅ PASS | No engine changes. The condition is a read-only check on existing state. |
+| **V. Simplicity & In-Memory First** | ✅ PASS | Zero new dependencies, no infrastructure changes. Minimal diff. |
 
-No violations. Complexity tracking table not required.
-
----
+**Constitution Check result: ALL GATES PASS. Proceed to Phase 0.**
 
 ## Project Structure
 
-### Source Code
+### Documentation (this feature)
 
 ```text
+.specify/memory/
+├── plan.md              # This file
+├── research.md          # Phase 0 output
+├── data-model.md        # Phase 1 output
+├── quickstart.md        # Phase 1 output
+├── contracts/           # Phase 1 output
+└── tasks.md             # Phase 2 output (/speckit.tasks — NOT created by /speckit.plan)
+```
+
+### Source Code (repository root)
+
+```text
+backend/
+├── game/
+│   ├── engine.py          # Pure game logic (no changes required)
+│   ├── state.py           # Pydantic models (no changes required)
+│   ├── room_manager.py    # Orchestration layer (no changes required)
+│   └── events.py          # Unused event bus (no changes required)
+├── main.py                # FastAPI entrypoint (no changes required)
+└── tests/
+    ├── test_engine.py
+    ├── test_rooms.py
+    └── test_simulation.py
+
 frontend/
 └── src/
-    └── components/
-        ├── Lobby.jsx          ← add footer
-        ├── PlayerLobby.jsx    ← add footer
-        └── GameRoom.jsx       ← add footer
+    ├── App.jsx
+    ├── components/
+    │   ├── GameRoom.jsx   # ← ONLY FILE CHANGED: button label conditional
+    │   ├── Lobby.jsx
+    │   ├── PlayerLobby.jsx
+    │   ├── RulesModal.jsx
+    │   └── Scoreboard.jsx
+    └── hooks/
+        └── useWebSocket.js
 ```
 
-No new files. No backend changes. No new dependencies.
+**Structure Decision**: Web application layout. The single changed file is `frontend/src/components/GameRoom.jsx`. All other files are listed for orientation but require no modification.
 
----
+## Complexity Tracking
 
-## Phase 0: Research
-
-### Decision Log
-
-| Topic | Decision | Rationale |
-|-------|----------|-----------|
-| Shared component vs inline | Inline JSX in each component | Three screens, one line each — a shared component adds indirection with no benefit at this scale |
-| Styling approach | Tailwind CSS utility classes | Tailwind is the project's configured styling framework; keeps styling co-located and consistent |
-| Positioning | `fixed` bottom vs in-flow `footer` | In-flow `<footer>` inside each screen's root element — avoids z-index conflicts with modals (RulesModal uses `fixed`) |
-| Contrast/size | `text-xs text-gray-400` (or equivalent low-contrast Tailwind classes) | Satisfies "small text, low contrast, unobtrusive" requirement from spec |
-
-### Alternatives Considered
-
-- **Shared `<CopyrightFooter />` component**: eliminated — three one-line usages don't justify a new file or import chain.
-- **`position: fixed; bottom: 0`**: eliminated — the existing `RulesModal` is fixed-position and could overlap; in-flow footer avoids layering conflicts entirely.
-- **CSS file addition**: eliminated — Tailwind inline classes are sufficient and consistent with the codebase's styling approach.
-
----
-
-## Phase 1: Design & Contracts
-
-### Data Model
-
-None. This feature introduces no new data, state, or entities.
-
-### Interface Contracts
-
-None. This feature makes no changes to the WebSocket API, HTTP endpoints, or any server-side interface.
-
-### Implementation Design
-
-Each of the three screens renders a root container element. A `<footer>` element is appended as the last child of that root container, containing the copyright text. Tailwind classes enforce the visual treatment:
-
-```jsx
-<footer className="text-xs text-gray-400 text-center py-2">
-  Copyright 2026 Alea Iacta Est Game Foundry
-</footer>
-```
-
-**Exact classes** (subject to minor adjustment during implementation if the surrounding layout uses a different color scale):
-- `text-xs` — smallest standard text size
-- `text-gray-400` — low contrast against typical dark or light backgrounds
-- `text-center` — centered across all screen widths
-- `py-2` — minimal vertical breathing room
-
-### Files to Modify
-
-| File | Change |
-|------|--------|
-| `frontend/src/components/Lobby.jsx` | Append `<footer>` inside root container's JSX return |
-| `frontend/src/components/PlayerLobby.jsx` | Append `<footer>` inside root container's JSX return |
-| `frontend/src/components/GameRoom.jsx` | Append `<footer>` inside root container's JSX return |
-
-### Verification
-
-After implementation, manually verify:
-1. Footer appears on the Lobby screen (room list).
-2. Footer appears on the PlayerLobby screen (pre-game waiting room).
-3. Footer appears on the GameRoom screen during active play, round-over panel, and game-finished leaderboard.
-4. Footer does not overlap or obscure any game element, action button, or the RulesModal FAB.
-5. Text is visibly smaller and lower contrast than surrounding UI text.
-
----
-
-## Out of Scope
-
-- Backend changes of any kind
-- New React components or files
-- Changes to `RulesModal.jsx`, `Scoreboard.jsx`, `CardView`, or `PlayerSeat`
-- Mobile layout adjustments (post-v1 backlog per spec §13)
-- Any animation, hover effects, or interactive behaviour on the footer
+> No Constitution Check violations. Section not applicable.

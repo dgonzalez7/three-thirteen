@@ -462,7 +462,7 @@ App (phase state machine: 'lobby' | 'player_lobby' | 'game_room')
 **`GameRoom`**
 - Opens a raw WebSocket to `/ws/room/{roomId}?player_id={myPlayerId}`.
 - Renders one of three views based on `phase`:
-  - **Active game** — pile area, opponent seats (`PlayerSeat`), own hand (`CardView`) with drag-to-reorder, action buttons (draw from pile, draw from discard, discard, go out).
+  - **Active game** — pile area, opponent seats (`PlayerSeat`), own hand (`CardView`) with drag-to-reorder, action buttons (draw from pile, draw from discard, discard, go out). The "Go Out" button is relabeled **"Push"** when at least one other player has already gone out in the current round; behaviour, placement, and styling are unchanged — only the label differs.
   - **Round over** — scoring table with per-player results; "Next Round" / "See Final Scores" button.
   - **Game finished** — leaderboard ranked lowest to highest; "Back to Lobby" button.
 - Persists hand card order to `localStorage` under key `hand-order-{playerId}-{roomId}`; merges server hand with stored order on each `game_state` update.
